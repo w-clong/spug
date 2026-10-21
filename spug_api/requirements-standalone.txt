@@ -1,0 +1,17 @@
+# Spug 单机免 Redis 版依赖清单（相对官方 requirements.txt 裁剪）
+# 移除：channels-redis / django_redis / redis（改用 libs.memredis 内存层）
+#       gunicorn（单进程 daphne 一体化）
+#       python-ldap（可选企业特性，代码已做缺包保护）
+apscheduler==3.10.4
+Django >= 4.2.0, < 4.3.0
+paramiko==3.4.0
+channels >= 4.0.0, < 5.0.0
+daphne >= 4.0.0, < 5.0.0
+asgiref==3.7.2
+requests >= 2.31.0, < 3.0.0
+GitPython==3.1.62
+openpyxl==3.1.2
+user_agents==2.2.0
+# 桌面模式（托盘 + 内置图标）：无控制台运行、托盘菜单、自动打开浏览器
+pystray==0.19.5
+pillow==13.0.0

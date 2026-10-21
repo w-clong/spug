@@ -1,0 +1,9 @@
+﻿venv
+.venv-win
+.uv-cache
+build
+dist
+data
+__pycache__
+*.pyc
+
