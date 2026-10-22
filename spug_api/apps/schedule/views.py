@@ -27,8 +27,11 @@ class Schedule(View):
             Argument('id', type=int, required=False),
             Argument('type', help='请输入任务类型'),
             Argument('name', help='请输入任务名称'),
-            Argument('interpreter', help='请选择执行解释器'),
-            Argument('command', help='请输入任务内容'),
+            Argument('kind', default='command'),
+            Argument('module', required=False),
+            Argument('dry_run', type=bool, default=False),
+            Argument('interpreter', default='sh'),
+            Argument('command', default=''),
             Argument('rst_notify', type=dict, help='请选择执行失败通知方式'),
             Argument('targets', type=list, filter=lambda x: len(x), help='请选择执行对象'),
             Argument('trigger', filter=lambda x: x in dict(Task.TRIGGERS), help='请选择触发器类型'),
@@ -36,6 +39,18 @@ class Schedule(View):
             Argument('desc', required=False),
         ).parse(request.body)
         if error is None:
+            if form.kind not in ('command', 'state', 'facts'):
+                return json_response(error='不支持的任务类型')
+            if form.kind == 'state':
+                from apps.ops.kernel.modules import MODULE_SCHEMA
+                if form.module not in MODULE_SCHEMA:
+                    return json_response(error='不支持的状态模块')
+                try:
+                    json.loads(form.command or '{}')
+                except ValueError:
+                    return json_response(error='状态模块参数格式错误')
+            elif form.kind == 'command' and not form.command:
+                return json_response(error='请输入任务内容')
             form.targets = json.dumps(form.targets)
             form.rst_notify = json.dumps(form.rst_notify)
             if form.trigger == 'cron':
@@ -77,7 +92,8 @@ class Schedule(View):
                 task.latest_id = None
                 if form.is_active:
                     message = {'id': form.id, 'action': 'add'}
-                    message.update(task.to_dict(selects=('interpreter', 'trigger', 'trigger_args', 'command', 'targets')))
+                    message.update(task.to_dict(selects=('interpreter', 'trigger', 'trigger_args',
+                                                         'command', 'targets', 'kind', 'module', 'dry_run')))
                 else:
                     message = {'id': form.id, 'action': 'remove'}
                 rds_cli = get_redis_connection()

@@ -121,9 +121,29 @@ class SSHConsumer(BaseConsumer):
 
             self.chan = self.ssh.invoke_shell(term='xterm')
             self.chan.transport.set_keepalive(30)
+            self._maybe_attach_tmux(host)
             Thread(target=self.loop_read).start()
         else:
             self.close_with_message('你当前无权限操作该主机，请联系管理员授权。')
+
+    def _maybe_attach_tmux(self, host):
+        """可选：主机变量 spug_tmux=1 时自动附着同名 tmux 会话；未安装 tmux 自动降级普通 shell。"""
+        try:
+            from apps.ops.models import HostVariable
+            enabled = HostVariable.objects.filter(host_id=host.id, key='spug_tmux', value='1').exists()
+            if not enabled:
+                return
+            channel = self.ssh.get_transport().open_session()
+            channel.exec_command('command -v tmux >/dev/null 2>&1 && echo yes || echo no')
+            output = channel.makefile('rb').read().decode(errors='ignore').strip()
+            channel.close()
+            if 'yes' not in output:
+                self.send(text_data='\r\n\x1b[33m未安装 tmux，使用普通 shell\x1b[0m\r\n')
+                return
+            self.chan.send('tmux new -A -s spug\n')
+            self.send(text_data='\r\n\x1b[36m已自动附着 tmux 会话 spug（断开后可用同一会话恢复）\x1b[0m\r\n')
+        except Exception:
+            pass
 
 
 class NotifyConsumer(BaseConsumer):

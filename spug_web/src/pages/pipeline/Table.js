@@ -72,6 +72,12 @@ function ComTable() {
               <Action.Button>{t('执行')}</Action.Button>
             </Popconfirm>
           )}
+          {hasPermission('pipeline.pipeline.do') && (
+            <Popconfirm title={t('以 Dry-run 巡检模式执行（只检测、不修改主机）？')}
+                        onConfirm={() => S.showConsole(info, true)}>
+              <Action.Button>{t('Dry-run')}</Action.Button>
+            </Popconfirm>
+          )}
           <Action.Button onClick={() => S.showHistories(info)}>{t('记录')}</Action.Button>
           <Action.Button danger auth="pipeline.pipeline.del" onClick={() => handleDelete(info)}>{t('删除')}</Action.Button>
         </Action>

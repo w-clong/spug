@@ -51,9 +51,10 @@ class Store {
       })
   }
 
-  showConsole = (record) => {
+  showConsole = (record, dryRun = false) => {
     this.record = record
-    return http.post('/api/pipeline/do/', {id: record.id})
+    this.dryRun = dryRun
+    return http.post('/api/pipeline/do/', {id: record.id, dry_run: dryRun})
       .then(res => {
         S.record = record
         S.token = res.token

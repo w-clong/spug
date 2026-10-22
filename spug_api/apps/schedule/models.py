@@ -37,6 +37,10 @@ class Task(models.Model, ModelMixin):
     )
     name = models.CharField(max_length=50)
     type = models.CharField(max_length=50)
+    # kind: command = 原生脚本；state = pyinfra 状态模块；facts = Facts 刷新
+    kind = models.CharField(max_length=16, default='command')
+    module = models.CharField(max_length=32, null=True)
+    dry_run = models.BooleanField(default=False)
     interpreter = models.CharField(max_length=20, default='sh')
     command = models.TextField()
     targets = models.TextField()

@@ -4,6 +4,9 @@
   flex-direction: column;
   border-radius: 4px;
   margin: -24px -24px 0;
+  /* 占满内容区高度，内部用 flex 分配，避免 100vh 计算误差 */
+  height: calc(100% + 24px);
+  min-height: 0;
 }
 
 .header {
@@ -41,9 +44,16 @@
 
 .body {
   position: relative;
+  display: flex;
+  flex-direction: row;
+  /* 用 flex 自适应高度，替代 calc(100vh - ...)：高倍缩放时不会被裁掉 */
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 
   .nodes {
-    height: calc(100vh - 48px - 56px);
+    flex: 1;
+    min-width: 0;
     padding: 24px;
     overflow: auto;
   }

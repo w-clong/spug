@@ -17,6 +17,8 @@ KEYS_DEFAULT = {
     'private_key': None,
     'public_key': None,
     'spug_push_key': None,
+    # 平台全局变量（流水线变量上下文的最低优先级来源）
+    'global_variables': {},
 }
 
 

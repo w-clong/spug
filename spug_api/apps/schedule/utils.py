@@ -14,6 +14,43 @@ def send_fail_notify(task, msg=None):
         _do_notify(task, mode, url, msg)
 
 
+def send_summary_notify(task, title, content):
+    """状态模块/巡检任务的汇总通知：仅在存在变更或失败时调用。"""
+    rst_notify = json.loads(task.rst_notify or '{}')
+    mode = rst_notify.get('mode')
+    url = rst_notify.get('value')
+    if mode == '0' or not url:
+        return
+    lines = content.splitlines()
+    if mode == '1':
+        texts = [f'## <font color="#1296db">{title}</font>'] + lines + ['> 来自 Spug 运维平台']
+        Notification.handle_request(url, {
+            'msgtype': 'markdown',
+            'markdown': {'title': title, 'text': '\n\n'.join(texts)},
+            'at': {'isAtAll': False},
+        }, 'dd')
+    elif mode == '2':
+        Notification.handle_request(url, {
+            'task_id': task.id,
+            'task_name': task.name,
+            'task_type': task.type,
+            'message': content,
+            'created_at': human_datetime(),
+        })
+    elif mode == '3':
+        texts = [f'## {title}'] + lines + ['> 来自 Spug 运维平台']
+        Notification.handle_request(url, {
+            'msgtype': 'markdown',
+            'markdown': {'content': '\n'.join(texts)},
+        }, 'wx')
+    elif mode == '4':
+        post_lines = [[{'tag': 'text', 'text': line}] for line in lines]
+        Notification.handle_request(url, {
+            'msg_type': 'post',
+            'content': {'post': {'zh_cn': {'title': title, 'content': post_lines}}},
+        }, 'fs')
+
+
 def _do_notify(task, mode, url, msg):
     if mode == '1':
         texts = [

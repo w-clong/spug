@@ -1,20 +1,45 @@
 .index {
   display: flex;
-  height: calc(100vh - 218px);
-  min-height: 420px;
+  /* 不再用 100vh 固定高度：内容（如状态模块表单）较高时由 .left 内部滚动，
+     低分辨率/高倍缩放下也不会被裁掉 */
+  height: calc(100vh - 168px);
+  min-height: 360px;
   background-color: #fff;
   overflow: hidden;
+  /* 视口极矮时整体仍可滚动 */
+  max-height: calc(100vh - 120px);
 
   .left {
     padding: 24px;
     width: 60%;
     border-right: 1px solid #dfdfdf;
+    /* 表单可能很长，左栏独立纵向滚动 */
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    /* 明确显示滚动条，避免用户以为内容被截断 */
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
 
     .tips {
-      position: absolute;
-      top: 10px;
-      left: 180px;
+      /* 原先是 absolute + left:180px，新增「状态模块」按钮后会与单选按钮重叠；
+         改为行内元素，跟在按钮组后面自然排列 */
+      display: inline-block;
+      margin-left: 12px;
       color: #999;
+      vertical-align: middle;
     }
 
     .tips:hover {
@@ -30,10 +55,12 @@
   .right {
     width: 40%;
     max-width: 600px;
+    min-width: 260px;
     display: flex;
     flex-direction: column;
     background-color: #fafafa;
     padding: 24px 24px 0 24px;
+    height: 100%;
 
     .title {
       font-weight: 500;
@@ -266,6 +293,30 @@
         width: 100%;
         height: calc(100vh - 300px);
       }
+    }
+  }
+}
+/* 窄屏/高倍缩放：左右分栏改为上下堆叠，各自滚动，避免横向溢出与内容裁切 */
+@media (max-width: 1280px) {
+  .index {
+    flex-direction: column;
+    height: auto;
+    max-height: none;
+
+    .left {
+      width: 100%;
+      height: auto;
+      max-height: 62vh;
+      border-right: none;
+      border-bottom: 1px solid #dfdfdf;
+    }
+
+    .right {
+      width: 100%;
+      max-width: none;
+      min-width: 0;
+      height: auto;
+      max-height: 38vh;
     }
   }
 }

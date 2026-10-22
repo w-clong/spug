@@ -81,12 +81,31 @@
   flex-direction: column;
   justify-content: space-between;
   padding: 24px 24px 0;
-  overflow-y: scroll;
+  /* 内容区独立滚动：外层 Layout 锁定 100vh，超出部分在这里滚，
+     避免高倍缩放/小窗口时内容被裁掉且无法查看 */
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
+/* 显示细滚动条，避免用户看不到可滚动而以为页面显示不全 */
 .content::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 8px;
+  height: 8px;
+}
+
+.content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+}
+
+.content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.content::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .sider {

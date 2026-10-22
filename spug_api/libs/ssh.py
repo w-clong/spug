@@ -119,6 +119,31 @@ class SSH:
             output += data
         return channel.recv_exit_status(), self._decode(output)
 
+    def exec_command_stdin(self, command, stdin_data=None, environment=None, timeout=600):
+        """执行命令并向其 stdin 写入数据（用于 sudo -S 等场景）。
+
+        stdin 走 SSH 加密通道，不出现在命令行参数/日志里，也不落磁盘。
+        """
+        self.get_client()
+        channel = self.client.get_transport().open_session()
+        channel.set_combine_stderr(True)
+        if environment:
+            command = self._make_env_command(environment) + command
+        channel.exec_command(command)
+        if stdin_data is not None:
+            try:
+                channel.sendall(stdin_data if isinstance(stdin_data, bytes) else stdin_data.encode())
+            except Exception:
+                pass
+        channel.shutdown_write()
+        output = b''
+        while True:
+            data = channel.recv(4096)
+            if not data:
+                break
+            output += data
+        return channel.recv_exit_status(), self._decode(output)
+
     def exec_command(self, command, environment=None):
         channel = self._get_channel()
         command = self._handle_command(command, environment)

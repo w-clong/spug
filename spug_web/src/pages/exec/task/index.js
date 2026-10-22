@@ -6,12 +6,13 @@
 import React, { useState, useEffect } from 'react';
 import { observer } from 'mobx-react';
 import { PlusOutlined, ThunderboltOutlined, BulbOutlined, QuestionCircleOutlined } from '@ant-design/icons';
-import { Form, Button, Radio, Tooltip } from 'antd';
+import { Form, Button, Radio, Tooltip, Switch, message } from 'antd';
 import { ACEditor, AuthDiv, Breadcrumb } from 'components';
 import HostSelector from 'pages/host/Selector';
 import TemplateSelector from './TemplateSelector';
 import Parameter from './Parameter';
 import Output from './Output';
+import StateForm from './StateForm';
 import { http, cleanCommand, t, docsUrl } from 'libs';
 import moment from 'moment';
 import store from './store';
@@ -26,6 +27,14 @@ function TaskIndex() {
   const [histories, setHistories] = useState([])
   const [parameters, setParameters] = useState([])
   const [visible, setVisible] = useState(false)
+  const [modules, setModules] = useState({})
+  const [moduleKey, setModuleKey] = useState('')
+  const [moduleParams, setModuleParams] = useState({})
+  const [dryRun, setDryRun] = useState(false)
+
+  useEffect(() => {
+    http.get('/api/ops/modules/').then(setModules)
+  }, [])
 
   useEffect(() => {
     if (!loading) {
@@ -51,6 +60,20 @@ function TaskIndex() {
   }, [])
 
   function handleSubmit(params) {
+    if (interpreter === 'state') {
+      if (!moduleKey) return message.error(t('请选择状态模块'))
+      setLoading(true)
+      http.post('/api/exec/do/', {
+        kind: 'state',
+        module: moduleKey,
+        params: moduleParams,
+        dry_run: dryRun,
+        host_ids: store.host_ids,
+      })
+        .then(store.switchConsole)
+        .finally(() => setLoading(false))
+      return
+    }
     if (!params && parameters.length > 0) {
       return setVisible(true)
     }
@@ -71,9 +94,18 @@ function TaskIndex() {
 
   function handleClick(item) {
     setTemplateId(item.template_id)
-    setInterpreter(item.interpreter)
+    setInterpreter(item.kind === 'state' ? 'state' : (item.interpreter || 'sh'))
     setCommand(item.command)
     setParameters(item.parameters || [])
+    if (item.kind === 'state') {
+      setModuleKey(item.module)
+      try {
+        setModuleParams(JSON.parse(item.command || '{}'))
+      } catch (e) {
+        setModuleParams({})
+      }
+      setDryRun(!!item.dry_run)
+    }
     store.host_ids = item.host_ids
   }
 
@@ -98,11 +130,36 @@ function TaskIndex() {
               onChange={e => setInterpreter(e.target.value)}>
               <Radio.Button value="sh" style={{width: 80, textAlign: 'center'}}>Shell</Radio.Button>
               <Radio.Button value="python" style={{width: 80, textAlign: 'center'}}>Python</Radio.Button>
+              <Radio.Button value="state" style={{width: 96, textAlign: 'center'}}>{t('状态模块')}</Radio.Button>
             </Radio.Group>
-            <a href={docsUrl('batch-exec')} target="_blank" rel="noopener noreferrer"
-               className={style.tips}><BulbOutlined/> {t('使用全局变量？')}</a>
-            <Button style={{float: 'right'}} icon={<PlusOutlined/>} onClick={store.switchTemplate}>{t('从执行模版中选择')}</Button>
-            <ACEditor className={style.editor} mode={interpreter} value={command} width="100%" onChange={setCommand}/>
+            {interpreter === 'state' ? (
+              <>
+                <StateForm
+                  modules={modules}
+                  moduleKey={moduleKey}
+                  params={moduleParams}
+                  onModuleChange={key => {
+                    setModuleKey(key)
+                    setModuleParams({})
+                  }}
+                  onParamChange={(name, value) => setModuleParams(old => ({ ...old, [name]: value }))}/>
+                <Form.Item label="Dry-run 预览">
+                  <Switch checked={dryRun} onChange={setDryRun}/>
+                  <span style={{marginLeft: 8, color: '#999'}}>
+                    {t('仅检查并输出将要下发的变更，不修改主机')}
+                  </span>
+                </Form.Item>
+              </>
+            ) : (
+              <>
+                <a href={docsUrl('batch-exec')} target="_blank" rel="noopener noreferrer"
+                   className={style.tips}><BulbOutlined/> {t('使用全局变量？')}</a>
+                <Button style={{float: 'right'}} icon={<PlusOutlined/>}
+                        onClick={store.switchTemplate}>{t('从执行模版中选择')}</Button>
+                <ACEditor className={style.editor} mode={interpreter} value={command} width="100%"
+                          onChange={setCommand}/>
+              </>
+            )}
           </Form.Item>
           <Button loading={loading} icon={<ThunderboltOutlined/>} type="primary"
                   onClick={() => handleSubmit()}>{t('开始执行')}</Button>
@@ -118,9 +175,13 @@ function TaskIndex() {
           <div className={style.inner}>
             {histories.map((item, index) => (
               <div key={index} className={style.item} onClick={() => handleClick(item)}>
-                <div className={style[item.interpreter]}>{item.interpreter.substr(0, 2)}</div>
+                <div className={style[item.kind === 'state' ? 'sh' : item.interpreter]}>
+                  {item.kind === 'state' ? '状态' : item.interpreter.substr(0, 2)}
+                </div>
                 <div className={style.number}>{item.host_ids.length}</div>
-                {item.template_name ? (
+                {item.kind === 'state' ? (
+                  <div className={style.tpl}>{item.module}{item.dry_run ? ' (Dry-run)' : ''}</div>
+                ) : item.template_name ? (
                   <div className={style.tpl}>{item.template_name}</div>
                 ) : (
                   <div className={style.command}>{item.command}</div>

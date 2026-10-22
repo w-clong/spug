@@ -1,4 +1,4 @@
-# Copyright: (c) OpenSpug Organization. https://github.com/openspug/spug
+﻿# Copyright: (c) OpenSpug Organization. https://github.com/openspug/spug
 # Copyright: (c) <spug.dev@gmail.com>
 # Released under the AGPL-3.0 License.
 from django.conf import settings
@@ -46,13 +46,13 @@ def fill_node_targets(nodes):
     """把节点里的主机 id 补成展示名，控制台的主机分页和历史回放都依赖 _targets"""
     ids = set()
     for item in nodes:
-        if item.get('module') in ('ssh_exec', 'data_upload'):
+        if item.get('module') in ('ssh_exec', 'data_upload', 'state', 'facts', 'artifact'):
             ids.update(item.get('targets') or [])
         elif item.get('module') == 'data_transfer':
             ids.update(item['destination']['targets'])
     host_map = {x.id: f'{x.name}({x.hostname})' for x in Host.objects.filter(id__in=ids)}
     for item in nodes:
-        if item.get('module') in ('ssh_exec', 'data_upload'):
+        if item.get('module') in ('ssh_exec', 'data_upload', 'state', 'facts', 'artifact'):
             targets = item.get('targets') or []
         elif item.get('module') == 'data_transfer':
             targets = item['destination']['targets']
@@ -64,10 +64,14 @@ def fill_node_targets(nodes):
 
 
 class NodeExecutor:
-    def __init__(self, rds, token, nodes, params=None, pipe_name=None, language='zh', history_id=None):
+    def __init__(self, rds, token, nodes, params=None, pipe_name=None, language='zh', history_id=None,
+                 dry_run=False, operator=None, pipeline_id=None):
         self.rds = rds
         self.token = token
         self.pipe_name = pipe_name or ''
+        self.dry_run = dry_run
+        self.operator = operator
+        self.pipeline_id = pipeline_id
         self.nodes = {x.id: x for x in map(AttrDict, nodes)}
         self.node = AttrDict(nodes[0])
         self.helper = Helper.make(self.rds, self.token, language)
@@ -81,12 +85,32 @@ class NodeExecutor:
         self.pending = 0
         self.lock = Lock()
 
+    @staticmethod
+    def _match(condition, state):
+        """下游节点条件匹配。
+
+        兼容原生 success/error/always，并新增：
+          changed   —— 上游发生了状态变更（Ansible handler 场景）
+          unchanged —— 上游执行成功但无变更
+        """
+        if condition == 'always':
+            return True
+        if condition == 'changed':
+            return state == 'changed'
+        if condition == 'unchanged':
+            return state == 'success'
+        if condition == 'success':
+            # 无变更和发生变更都属于「执行成功」，保持原生下游行为
+            return state in ('success', 'changed')
+        return condition == state
+
     def run(self, node=None, state=None):
         if node:
             self.states[node.id] = state
             downstream = getattr(node, 'downstream', [])
             down_nodes = [self.nodes[x] for x in downstream]
-            available_nodes = [x for x in down_nodes if x.get('condition', 'success') in (state, 'always')]
+            available_nodes = [x for x in down_nodes
+                               if self._match(x.get('condition', 'success'), state)]
             if len(available_nodes) >= 2:
                 for item in available_nodes[1:]:
                     # 计数必须在起线程前加：新线程尚未跑起来时本分支可能已经先归零
@@ -115,7 +139,7 @@ class NodeExecutor:
         self.helper.clear()
         if not self.history_id:
             return
-        is_success = all(x == 'success' for x in self.states.values())
+        is_success = all(x in ('success', 'changed') for x in self.states.values())
         try:
             PipeHistory.finish(self.history_id, is_success)
         except Exception as e:
@@ -135,6 +159,11 @@ class NodeExecutor:
             self._leave()
 
     def _do_dispatch(self, node, state=None):
+        # 全局 Dry-run：只允许状态模块/Facts 节点执行（不带变更），其余节点跳过
+        if self.dry_run and node.module not in ('state', 'facts', 'parameter'):
+            self.helper.send_info(node.id, 'Dry-run 模式：跳过该节点的实际执行\r\n', 'processing')
+            self.helper.send_status(node.id, 'success')
+            return self.run(node, 'success')
         if node.module == 'build':
             self._do_build(node)
         elif node.module == 'ssh_exec':
@@ -145,6 +174,13 @@ class NodeExecutor:
             self._do_data_upload(node)
         elif node.module == 'parameter':
             self._do_parameter(node)
+        elif node.module == 'state':
+            self._do_state(node)
+        elif node.module == 'facts':
+            self._do_facts(node)
+        elif node.module == 'artifact':
+            from apps.ops.artifact import execute as execute_artifact
+            return execute_artifact(self, node)
         elif node.module in PUSH_MODULES:
             self._do_push(node, state)
         else:
@@ -170,6 +206,77 @@ class NodeExecutor:
                 self.env[item[0]] = item[1]
         self.helper.send_success(node.id, '参数解析完成')
         self.run(node, 'success')
+
+    def _do_state(self, node):
+        """pyinfra 状态模块节点：同进程执行，输出 changed/failed 供下游分支判断。"""
+        from apps.ops.kernel.runner import StateRunner
+        timestamp = time.time()
+        module = node.get('state_module')
+        params = node.get('state_params') or {}
+        targets = node.get('targets') or []
+        hosts = list(Host.objects.filter(id__in=targets))
+        if not module or not hosts:
+            self.helper.send_error(node.id, '状态模块节点未配置模块或目标主机')
+            return self.run(node, 'error')
+
+        self.helper.send_info(node.id, f'开始执行状态模块: {module}\r\n', 'processing')
+
+        def on_event(host_id, kind, message):
+            key = f'{node.id}.{host_id}' if host_id else node.id
+            self.helper.send(key, f'{message}\r\n')
+
+        dry_run = bool(node.get('dry_run')) or bool(getattr(self, 'dry_run', False))
+        summary = StateRunner(
+            hosts, module, params,
+            dry_run=dry_run,
+            on_event=on_event,
+            record=True,
+            source='pipeline',
+            source_id=self.history_id,
+            operator=getattr(self, 'operator', None),
+        ).run()
+
+        for item in summary.results:
+            key = f'{node.id}.{item.host_id}'
+            if item.failed:
+                self.helper.send_error(key, item.msg or '执行失败')
+            else:
+                text = '已变更' if item.changed else '无变更'
+                self.helper.send_success(key, text, start_time=timestamp)
+
+        self.env['SPUG_NODE_CHANGED'] = 'true' if summary.changed_count else 'false'
+        self.env['SPUG_NODE_FAILED'] = 'true' if summary.failed_count else 'false'
+        state = 'error' if summary.failed_count else ('changed' if summary.changed_count else 'success')
+        self.helper.send_status(node.id, 'error' if state == 'error' else 'success')
+        self.run(node, state)
+
+    def _do_facts(self, node):
+        """Facts 强制刷新节点：覆盖缓存，保证后续关键任务使用最新系统信息。"""
+        from apps.ops.kernel.facts_runner import refresh
+        timestamp = time.time()
+        hosts = list(Host.objects.filter(id__in=node.get('targets') or []))
+        if not hosts:
+            self.helper.send_error(node.id, 'Facts 刷新节点未配置目标主机')
+            return self.run(node, 'error')
+        self.helper.send_info(node.id, '开始刷新 Facts\r\n', 'processing')
+
+        def on_event(host_id, kind, message):
+            key = f'{node.id}.{host_id}' if host_id else node.id
+            if kind == 'error':
+                self.helper.send_error(key, message)
+            else:
+                self.helper.send(key, f'{message}\r\n')
+
+        result = refresh(hosts, on_event=on_event)
+        for host in hosts:
+            key = f'{node.id}.{host.id}'
+            if host.id in result:
+                self.helper.send_success(key, 'Facts 已刷新', start_time=timestamp)
+            else:
+                self.helper.send_error(key, 'Facts 刷新失败')
+        state = 'success' if len(result) == len(hosts) else 'error'
+        self.helper.send_status(node.id, state)
+        self.run(node, state)
 
     def _push_context(self, node, state):
         """推送节点可用的变量，在流水线全局变量之上追加本次执行的上下文。
@@ -320,7 +427,15 @@ class NodeExecutor:
                 pid = ssh.get_pid()
                 if pid:
                     self.rds.set(pid_key, f'{host.id}.{pid}', 3600)
-                is_success = self.helper.remote_exec(key, ssh, node.command, self.env)
+                # 统一注入 Facts / 主机变量 / 分组变量
+                env = dict(self.env)
+                try:
+                    from apps.ops.kernel import variables as var_kernel
+                    _, extra_env = var_kernel.collect(host)
+                    env.update(extra_env)
+                except Exception:
+                    pass
+                is_success = self.helper.remote_exec(key, ssh, node.command, env)
         except Exception as e:
             self.helper.send_error(key, f'Exception: {e}')
             return False
@@ -419,3 +534,4 @@ class NodeExecutor:
         state = 'success' if all(results) else 'error'
         self.helper.send_status(node.id, state)
         self.run(node, state)
+

@@ -46,14 +46,37 @@ class HostView(View):
             Argument('keep_pkey', type=bool, default=False),
             Argument('desc', required=False),
             Argument('password', required=False),
+            Argument('use_password', type=bool, default=False),
         ).parse(request.body)
         if error is None:
-            # 前端拿不到已保存的私钥，编辑时用 keep_pkey 表示沿用原独立密钥；不传 pkey 且不保留则清除
             keep_pkey = form.pop('keep_pkey')
-            if form.id and keep_pkey and not form.pkey:
-                form.pkey = Host.objects.filter(pk=form.id).values_list('pkey', flat=True).first()
-            if not _do_host_verify(form):
-                return json_response('auth fail')
+            use_password = form.pop('use_password')
+            if use_password:
+                # 密码认证模式：密码保存在本机数据库，连接时直接使用（不安装密钥）
+                password = form.pop('password', None)
+                if form.id and not password:
+                    password = Host.objects.filter(pk=form.id).values_list('password', flat=True).first()
+                if not password:
+                    return json_response(error='请输入登录密码')
+                try:
+                    with SSH(form.hostname, form.port, form.username, password=password) as ssh:
+                        ssh.ping()
+                except AuthenticationException:
+                    return json_response(error='密码连接认证失败，请检查密码是否正确')
+                except BadAuthenticationType:
+                    return json_response(error='该主机不支持密码认证')
+                except socket.timeout:
+                    return json_response(error='连接主机超时，请检查网络')
+                form.password = password
+                form.pkey = None
+            else:
+                # 密钥模式：清除历史密码，沿用「密码仅用于首次安装公钥」的原有逻辑
+                form.pop('password', None)
+                form.password = None
+                if form.id and keep_pkey and not form.pkey:
+                    form.pkey = Host.objects.filter(pk=form.id).values_list('pkey', flat=True).first()
+                if not _do_host_verify(form):
+                    return json_response('auth fail')
 
             group_ids = form.pop('group_ids')
             other = Host.objects.filter(name=form.name).first()
@@ -275,3 +298,57 @@ def _do_host_verify(form):
     except socket.timeout:
         raise Exception('连接主机超时，请检查网络')
     return True
+
+
+@auth('host.host.view')
+def export_json(request):
+    """主机配置 JSON 备份（不含密钥/密码等敏感凭证）。"""
+    data = []
+    for host in Host.objects.prefetch_related('groups').all():
+        data.append({
+            'name': host.name,
+            'hostname': host.hostname,
+            'port': host.port,
+            'username': host.username,
+            'desc': host.desc,
+            'groups': [x.name for x in host.groups.all()],
+        })
+    response = HttpResponse(json.dumps(data, ensure_ascii=False, indent=2),
+                            content_type='application/json; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="spug-hosts.json"'
+    return response
+
+
+@auth('host.host.add')
+def import_json(request):
+    """从 JSON 备份导入主机（不包含凭证，导入后需补充密钥或密码）。"""
+    try:
+        payload = json.loads(request.body or b'[]')
+    except ValueError:
+        return json_response(error='JSON 格式错误')
+    hosts = payload.get('hosts') if isinstance(payload, dict) else payload
+    if not isinstance(hosts, list):
+        return json_response(error='JSON 结构错误，应为数组或 {"hosts": [...]}')
+    created, skipped = 0, 0
+    for item in hosts:
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
+        name = (item.get('name') or '').strip()
+        hostname = (item.get('hostname') or '').strip()
+        if not name or not hostname or Host.objects.filter(name=name).exists():
+            skipped += 1
+            continue
+        host = Host.objects.create(
+            name=name, hostname=hostname, port=item.get('port') or 22,
+            username=item.get('username') or 'root', desc=item.get('desc'),
+            created_by=request.user)
+        group_names = item.get('groups') or []
+        if group_names:
+            groups = []
+            for group_name in group_names:
+                group, _ = Group.objects.get_or_create(name=group_name)
+                groups.append(group)
+            host.groups.set(groups)
+        created += 1
+    return json_response({'created': created, 'skipped': skipped})

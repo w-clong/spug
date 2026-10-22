@@ -40,6 +40,16 @@ class Job:
         )
         if isinstance(params, dict):
             self.env.update({f'_SPUG_{k}': str(v) for k, v in params.items()})
+        # 统一注入 Facts 与主机/分组变量（_SPUG_FACT_* / _SPUG_VAR_*）
+        try:
+            from apps.host.models import Host
+            from apps.ops.kernel import variables as var_kernel
+            host_obj = Host.objects.filter(pk=self.key).first()
+            if host_obj:
+                _, extra_env = var_kernel.collect(host_obj)
+                self.env.update(extra_env)
+        except Exception:
+            pass
 
     def _send(self, message):
         self.rds.publish(self.token, json.dumps(message))

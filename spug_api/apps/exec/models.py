@@ -35,6 +35,10 @@ class ExecTemplate(models.Model, ModelMixin):
 
 
 class ExecHistory(models.Model, ModelMixin):
+    # 任务类型：command = 原生 Shell/Python 脚本；state = pyinfra 状态模块
+    kind = models.CharField(max_length=16, default='command')
+    module = models.CharField(max_length=32, null=True)
+    dry_run = models.BooleanField(default=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     template = models.ForeignKey(ExecTemplate, on_delete=models.SET_NULL, null=True)
     digest = models.CharField(max_length=32, db_index=True)

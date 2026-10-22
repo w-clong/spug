@@ -11,6 +11,9 @@ import DataUpload from './DataUpload';
 import DataTransfer from './DataTransfer';
 import PushWebhook from './PushWebhook';
 import PushSpug from './PushSpug';
+import State from './State';
+import Facts from './Facts';
+import Artifact from './Artifact';
 import { t } from 'libs';
 
 // 未选择模块时必须把 handler 清掉：NodeConfig 里的 handler 是 useState，切换节点时
@@ -41,6 +44,12 @@ function ModuleConfig(props) {
       return <PushWebhook {...props}/>
     case 'push_spug':
       return <PushSpug {...props}/>
+    case 'state':
+      return <State {...props}/>
+    case 'facts':
+      return <Facts {...props}/>
+    case 'artifact':
+      return <Artifact {...props}/>
     default:
       return <Empty {...props}/>
   }

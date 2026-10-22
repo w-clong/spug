@@ -15,3 +15,5 @@ user_agents==2.2.0
 # 桌面模式（托盘 + 内置图标）：无控制台运行、托盘菜单、自动打开浏览器
 pystray==0.19.5
 pillow==13.0.0
+# B2 方案内核：同进程 import pyinfra 原生 API（禁止 CLI / 子进程 / 独立环境）
+pyinfra==3.10.0

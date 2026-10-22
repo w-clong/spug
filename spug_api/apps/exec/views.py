@@ -64,7 +64,10 @@ class TaskView(View):
     def post(self, request):
         form, error = JsonParser(
             Argument('host_ids', type=list, filter=lambda x: len(x), help='请选择执行主机'),
-            Argument('command', help='请输入执行命令内容'),
+            Argument('kind', default='command'),
+            Argument('module', required=False),
+            Argument('dry_run', type=bool, default=False),
+            Argument('command', required=False),
             Argument('interpreter', default='sh'),
             Argument('template_id', type=int, required=False),
             Argument('params', type=dict, handler=json.dumps, default={})
@@ -72,6 +75,14 @@ class TaskView(View):
         if error is None:
             if not has_host_perm(request.user, form.host_ids):
                 return json_response(error='无权访问主机，请联系管理员')
+            if form.kind not in ('command', 'state'):
+                return json_response(error='不支持的任务类型')
+            if form.kind == 'state':
+                from apps.ops.kernel.modules import MODULE_SCHEMA
+                if form.module not in MODULE_SCHEMA:
+                    return json_response(error='不支持的状态模块')
+            elif not form.command:
+                return json_response(error='请输入执行命令内容')
             token, rds = uuid.uuid4().hex, get_redis_connection()
             form.host_ids.sort()
             if form.template_id:
@@ -80,11 +91,15 @@ class TaskView(View):
                     form.template_id = None
 
             ExecHistory.objects.create(
+                kind=form.kind,
+                module=form.module,
+                dry_run=form.dry_run,
                 user=request.user,
                 digest=token,
                 interpreter=form.interpreter,
                 template_id=form.template_id,
-                command=form.command,
+                # 状态模块没有脚本内容，把模块参数 JSON 存到 command，历史记录可直接回放
+                command=(form.command or form.params) if form.kind == 'state' else form.command,
                 host_ids=json.dumps(form.host_ids),
                 params=form.params
             )
@@ -111,6 +126,20 @@ class TaskView(View):
                 host_ids = [x for x in host_ids if x in form.host_ids]
                 if not host_ids:
                     return json_response(error='未找到可重试的主机')
+            if task.kind == 'state':
+                # 状态模块任务：交给 pyinfra 内核 worker，同进程执行
+                job = dict(
+                    token=task.digest,
+                    host_ids=host_ids,
+                    module=task.module,
+                    params=json.loads(task.command or '{}'),
+                    dry_run=task.dry_run,
+                    language=get_request_language(request),
+                    user_id=task.user_id,
+                    operator=request.user.nickname,
+                )
+                rds.rpush(settings.STATE_WORKER_KEY, json.dumps(job))
+                return json_response()
             for host in Host.objects.filter(id__in=host_ids):
                 data = dict(
                     key=host.id,

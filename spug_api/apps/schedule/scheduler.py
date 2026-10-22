@@ -59,7 +59,7 @@ class Scheduler:
             raise TypeError(f'unknown schedule policy: {trigger!r}')
 
     @classmethod
-    def dispatch(cls, task_id, interpreter, command, targets):
+    def dispatch(cls, task_id, interpreter, command, targets, kind='command', module=None, dry_run=False):
         output = {x: None for x in targets}
         history = History.objects.create(
             task_id=task_id,
@@ -69,8 +69,21 @@ class Scheduler:
         )
         Task.objects.filter(pk=task_id).update(latest_id=history.id)
         rds_cli = get_redis_connection()
-        for t in targets:
-            rds_cli.rpush(SCHEDULE_WORKER_KEY, json.dumps([history.id, t, interpreter, command]))
+        if kind in ('state', 'facts'):
+            host_ids = [x for x in targets if x != 'local']
+            job = {
+                'history_id': history.id,
+                'task_id': task_id,
+                'host_ids': host_ids,
+                'kind': kind,
+                'module': module,
+                'params': json.loads(command) if command else {},
+                'dry_run': dry_run,
+            }
+            rds_cli.rpush(settings.STATE_WORKER_KEY, json.dumps(job))
+        else:
+            for t in targets:
+                rds_cli.rpush(SCHEDULE_WORKER_KEY, json.dumps([history.id, t, interpreter, command]))
         connections.close_all()
 
     def _init_builtin_jobs(self):
@@ -87,7 +100,8 @@ class Scheduler:
                     self.dispatch,
                     trigger,
                     id=str(task.id),
-                    args=(task.id, task.interpreter, task.command, json.loads(task.targets)),
+                    args=(task.id, task.interpreter, task.command, json.loads(task.targets),
+                          task.kind, task.module, task.dry_run),
                 )
             connections.close_all()
         except DatabaseError:
@@ -107,7 +121,8 @@ class Scheduler:
                     self.dispatch,
                     trigger,
                     id=str(task.id),
-                    args=(task.id, task.interpreter, task.command, task.targets),
+                    args=(task.id, task.interpreter, task.command, task.targets,
+                          task.get('kind', 'command'), task.get('module'), task.get('dry_run', False)),
                     replace_existing=True
                 )
             elif task.action == 'remove':

@@ -34,11 +34,20 @@ import socket
 import threading
 from pathlib import Path
 
-# 冻结环境（PyInstaller）：以可执行文件所在目录为运行根；源码运行以仓库根为运行根
+# 运行根目录优先级：
+#   SPUG_APP_ROOT（便携版启动器注入） > PyInstaller 冻结目录 > 源码仓库根
 _FROZEN = getattr(sys, 'frozen', False)
-_ROOT = Path(sys.executable).resolve().parent if _FROZEN else Path(__file__).resolve().parent.parent
+if os.environ.get('SPUG_APP_ROOT'):
+    _ROOT = Path(os.environ['SPUG_APP_ROOT']).resolve()
+elif _FROZEN:
+    _ROOT = Path(sys.executable).resolve().parent
+else:
+    _ROOT = Path(__file__).resolve().parent.parent
 
 os.environ.setdefault('SPUG_DATA_DIR', str(_ROOT / 'data'))
+# 便携布局（Spug.exe + runtime/ + app/ + web/）：前端产物固定放在 <根>/web
+if (_ROOT / 'web' / 'index.html').is_file():
+    os.environ.setdefault('SPUG_FRONTEND_DIR', str(_ROOT / 'web'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'spug.settings')
 # autobahn 的 NVX 原生加速在 PyInstaller 冻结环境下会误走 cffi 运行时编译回退
 # （需要读取 _utf8validator.c 源码），强制使用纯 Python 实现（功能等价，性能差异可忽略）
@@ -49,6 +58,48 @@ _log_file = None
 
 def _log(msg):
     print(f'[spug] {msg}', flush=True)
+
+
+def _config_paths():
+    """配置文件查找顺序：SPUG_CONFIG > 运行根 spug.ini > data/spug.ini。"""
+    paths = []
+    if os.environ.get('SPUG_CONFIG'):
+        paths.append(Path(os.environ['SPUG_CONFIG']))
+    paths.append(_ROOT / 'spug.ini')
+    paths.append(Path(os.environ['SPUG_DATA_DIR']) / 'spug.ini')
+    return paths
+
+
+def _load_config():
+    import configparser
+    for path in _config_paths():
+        if path.is_file():
+            parser = configparser.ConfigParser()
+            try:
+                parser.read(path, encoding='utf-8-sig')
+                return parser, path
+            except Exception as e:
+                _log('读取配置文件 %s 失败: %r' % (path, e))
+    return None, None
+
+
+def _server_addr():
+    """监听地址优先级：环境变量 > spug.ini [server] > 默认 0.0.0.0:9000。"""
+    host = os.environ.get('SPUG_HOST')
+    port = os.environ.get('SPUG_PORT')
+    conf, path = _load_config()
+    if conf is not None:
+        _log('使用配置文件: %s' % path)
+        if conf.has_section('server'):
+            host = host or conf.get('server', 'host', fallback=None)
+            port = port or conf.get('server', 'port', fallback=None)
+    host = (host or '0.0.0.0').strip()
+    try:
+        port = int(str(port).strip()) if port else 9000
+    except ValueError:
+        _log('端口配置无效: %r，回退到 9000' % (port,))
+        port = 9000
+    return host, port
 
 
 def _redirect_streams(reason):
@@ -156,8 +207,7 @@ def _run_daphne(host, port, signal_handlers=True):
 def cmd_start():
     _ensure_dirs()
     _start_threads()
-    host = os.environ.get('SPUG_HOST', '0.0.0.0')
-    port = int(os.environ.get('SPUG_PORT', '9000'))
+    host, port = _server_addr()
     _run_daphne(host, port)
 
 
@@ -300,8 +350,7 @@ def cmd_desktop():
     """双击启动：自动建库、起服务、开浏览器、驻留托盘。"""
     _redirect_streams('桌面模式启动')
     _ensure_dirs()
-    host = os.environ.get('SPUG_HOST', '0.0.0.0')
-    port = int(os.environ.get('SPUG_PORT', '9000'))
+    host, port = _server_addr()
     url = f'http://127.0.0.1:{port}/'
 
     if _port_open(port):

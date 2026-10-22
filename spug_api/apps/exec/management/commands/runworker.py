@@ -9,15 +9,18 @@ from concurrent.futures import ThreadPoolExecutor
 from apps.schedule.executors import schedule_worker_handler
 from apps.monitor.executors import monitor_worker_handler
 from apps.exec.executors import exec_worker_handler
+from apps.ops.executor import state_worker_handler
 from apps.notify.models import Notify
 from threading import Thread
 import logging
+import json
 import time
 import os
 
 EXEC_WORKER_KEY = settings.EXEC_WORKER_KEY
 MONITOR_WORKER_KEY = settings.MONITOR_WORKER_KEY
 SCHEDULE_WORKER_KEY = settings.SCHEDULE_WORKER_KEY
+STATE_WORKER_KEY = settings.STATE_WORKER_KEY
 
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s %(message)s')
 
@@ -52,9 +55,9 @@ class Worker:
     def run(self):
         logging.warning('Running worker')
         Thread(target=self.queue_monitor, daemon=True).start()
-        self.rds.delete(EXEC_WORKER_KEY, MONITOR_WORKER_KEY, SCHEDULE_WORKER_KEY)
+        self.rds.delete(EXEC_WORKER_KEY, MONITOR_WORKER_KEY, SCHEDULE_WORKER_KEY, STATE_WORKER_KEY)
         while True:
-            key, job = self.rds.blpop([EXEC_WORKER_KEY, SCHEDULE_WORKER_KEY, MONITOR_WORKER_KEY])
+            key, job = self.rds.blpop([EXEC_WORKER_KEY, SCHEDULE_WORKER_KEY, MONITOR_WORKER_KEY, STATE_WORKER_KEY])
             key = key.decode()
             if key == SCHEDULE_WORKER_KEY:
                 future = self._executor.submit(schedule_worker_handler, job)
@@ -62,6 +65,13 @@ class Worker:
                 future = self._executor.submit(monitor_worker_handler, job)
             elif key == EXEC_WORKER_KEY:
                 future = self._executor.submit(exec_worker_handler, job)
+            elif key == STATE_WORKER_KEY:
+                data = json.loads(job)
+                if isinstance(data, dict) and data.get('history_id'):
+                    from apps.ops.schedule_executor import schedule_state_worker_handler
+                    future = self._executor.submit(schedule_state_worker_handler, job)
+                else:
+                    future = self._executor.submit(state_worker_handler, job)
             else:
                 continue
             future.add_done_callback(self.job_done)

@@ -15,6 +15,8 @@ class Host(models.Model, ModelMixin):
     port = models.IntegerField(null=True)
     username = models.CharField(max_length=50)
     pkey = models.TextField(null=True)
+    # 密码认证（可选）：与 pkey 二选一；仅保存在本机 SQLite，不返回给前端
+    password = models.CharField(max_length=255, null=True)
     desc = models.CharField(max_length=255, null=True)
     is_verified = models.BooleanField(default=False)
     created_at = models.CharField(max_length=20, default=human_datetime)
@@ -25,13 +27,17 @@ class Host(models.Model, ModelMixin):
         return self.pkey or AppSetting.get('private_key')
 
     def get_ssh(self, pkey=None, default_env=None):
+        if self.password:
+            return SSH(self.hostname, self.port, self.username, None,
+                       password=self.password, default_env=default_env)
         pkey = pkey or self.private_key
         return SSH(self.hostname, self.port, self.username, pkey, default_env=default_env)
 
     def to_view(self):
-        # 独立密钥只在服务端使用，任何接口都不返回私钥原文
-        tmp = self.to_dict(excludes=('pkey',))
+        # 独立密钥/密码只在服务端使用，任何接口都不返回原文
+        tmp = self.to_dict(excludes=('pkey', 'password'))
         tmp['has_pkey'] = bool(self.pkey)
+        tmp['has_password'] = bool(self.password)
         if hasattr(self, 'hostextend'):
             tmp.update(self.hostextend.to_view())
         tmp['group_ids'] = []
@@ -89,6 +95,8 @@ class Group(models.Model, ModelMixin):
     name = models.CharField(max_length=50)
     parent_id = models.IntegerField(default=0)
     sort_id = models.IntegerField(default=0)
+    # 动态分组：成员由 Facts 规则自动维护，手工编辑成员时前端禁用
+    is_dynamic = models.BooleanField(default=False)
     hosts = models.ManyToManyField(Host, related_name='groups')
 
     def to_view(self, with_hosts=False):

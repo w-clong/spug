@@ -20,7 +20,8 @@ export default observer(function (props) {
   const [loading, setLoading] = useState(false)
 
   function handleSubmit() {
-    const formData = lds.pick(S.record, ['id', 'name', 'type', 'interpreter', 'command', 'desc', 'rst_notify']);
+    const formData = lds.pick(S.record, ['id', 'name', 'type', 'kind', 'module', 'dry_run',
+      'interpreter', 'command', 'desc', 'rst_notify']);
     formData['targets'] = S.targets.filter(x => x);
     formData['trigger'] = S.trigger;
     formData['trigger_args'] = _parse_args();

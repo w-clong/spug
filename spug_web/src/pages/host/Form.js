@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { observer } from 'mobx-react';
 import { ExclamationCircleOutlined, UploadOutlined } from '@ant-design/icons';
-import { Modal, Form, Input, TreeSelect, Button, Upload, Alert, message } from 'antd';
+import { Modal, Form, Input, TreeSelect, Button, Upload, Alert, message, Switch } from 'antd';
 import { http, X_TOKEN, t } from 'libs';
 import store from './store';
 import styles from './index.module.less';
@@ -109,7 +109,8 @@ export default observer(function () {
       onCancel={() => store.formVisible = false}
       confirmLoading={loading}
       onOk={handleSubmit}>
-      <Form form={form} labelCol={{span: 5}} wrapperCol={{span: 17}} initialValues={info}>
+      <Form form={form} labelCol={{span: 5}} wrapperCol={{span: 17}}
+            initialValues={{...info, use_password: !!info.has_password}}>
         <Form.Item required name="group_ids" label={t('主机分组')}>
           <TreeSelect
             multiple
@@ -131,6 +132,22 @@ export default observer(function () {
           <Form.Item name="port" className={styles.formAddress3} style={{width: 'calc(30%)'}}>
             <Input addonBefore="-p" placeholder={t('端口')}/>
           </Form.Item>
+        </Form.Item>
+        <Form.Item label={t('认证方式')}>
+          <Form.Item name="use_password" valuePropName="checked" noStyle>
+            <Switch checkedChildren={t('密码')} unCheckedChildren={t('密钥')}/>
+          </Form.Item>
+          <span style={{marginLeft: 8, color: '#999'}}>
+            {t('开启后保存登录密码并用于每次连接；关闭则使用 SSH 密钥认证')}
+          </span>
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate>
+          {({getFieldValue}) => getFieldValue('use_password') ? (
+            <Form.Item name="password" label={t('登录密码')}
+                       extra={t('密码保存在本机 SQLite，仅用于 SSH 连接；编辑时留空表示沿用已保存密码')}>
+              <Input.Password placeholder={t('请输入 SSH 登录密码')}/>
+            </Form.Item>
+          ) : null}
         </Form.Item>
         <Form.Item label={t('独立密钥')} extra={t('默认使用全局密钥，如果上传了独立密钥（私钥）则优先使用该密钥。')}>
           <Upload name="file" fileList={fileList} headers={{'X-Token': X_TOKEN}} beforeUpload={handleUpload}

@@ -14,6 +14,7 @@ import iconPushSpug from './assets/icon_push_spug.png';
 import iconPushDD from './assets/icon_push_dd.png';
 import iconPushFS from './assets/icon_push_fs.png';
 import iconPushWx from './assets/icon_push_wx.svg';
+import iconHealth from './assets/icon_health.png';
 import iconSelect from './assets/icon_select.png';
 
 function FeishuIcon({size}) {
@@ -55,6 +56,12 @@ function Icon(props) {
       return <FeishuIcon size={props.size || 42}/>
     case 'push_wx':
       return <Avatar size={props.size || 42} src={iconPushWx}/>
+    case 'state':
+      return <Avatar size={props.size || 42} src={iconSSHExec}/>
+    case 'facts':
+      return <Avatar size={props.size || 42} src={iconHealth}/>
+    case 'artifact':
+      return <Avatar size={props.size || 42} src={iconDataUpload}/>
     case undefined:
       return <Avatar size={props.size || 42} src={iconSelect}/>
     default:

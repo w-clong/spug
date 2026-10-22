@@ -14,6 +14,8 @@ urlpatterns = [
     path('group/', GroupView.as_view()),
     path('import/', post_import),
     path('export/', post_export),
+    path('export/json/', export_json),
+    path('import/json/', import_json),
     path('import/cloud/', cloud_import),
     path('import/region/', get_regions),
     path('parse/', post_parse),

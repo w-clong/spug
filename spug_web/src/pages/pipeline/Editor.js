@@ -6,14 +6,15 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { observer } from 'mobx-react';
-import { Button, Popconfirm, message } from 'antd';
-import { RollbackOutlined, EditOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Button, Popconfirm, message, Modal, Input } from 'antd';
+import { RollbackOutlined, EditOutlined, ThunderboltOutlined, SaveOutlined } from '@ant-design/icons';
 import NodeConfig from './NodeConfig';
 import Console from './console';
+import ContextPanel from './ContextPanel';
 import PipeForm from './Form';
 import Node from './Node';
 import { transfer } from './utils';
-import { history, t } from 'libs';
+import { history, t, http } from 'libs';
 import S from './store';
 import lds from 'lodash';
 import css from './editor.module.less';
@@ -131,12 +132,35 @@ function Editor(props) {
     return S.updateRecord()
   }
 
+  function handleSaveBaseline() {
+    const stateNodes = (S.record.nodes || []).filter(x => x.module === 'state' && x.state_module)
+    if (!stateNodes.length) return message.error(t('当前流水线没有状态模块节点'))
+    let name = `${S.record.name} 基线`
+    Modal.confirm({
+      title: t('保存为基线'),
+      content: <Input defaultValue={name} onChange={e => name = e.target.value}/>,
+      onOk: () => {
+        if (!name) return message.error(t('请输入基线名称'))
+        return http.post('/api/ops/baselines/', {
+          name,
+          description: t('从流水线 {} 导入', S.record.name),
+          nodes: stateNodes.map(x => ({
+            state_module: x.state_module,
+            state_params: x.state_params || {},
+          })),
+        }).then(() => message.success(t('已保存到基线管理')))
+      }
+    })
+  }
+
   return (
     <div className={css.container} onMouseDown={() => S.node = {}}>
       <div className={css.header}>
         <div className={css.title}>{S.record.name}</div>
         <EditOutlined className={css.edit} onClick={() => setVisible(true)}/>
         <div style={{flex: 1}}/>
+        <Button className={css.back} type="link" icon={<SaveOutlined/>}
+                onClick={handleSaveBaseline}>{t('存为基线')}</Button>
         <Popconfirm title={t('确定要执行吗？')} onConfirm={() => S.showConsole(S.record)}>
           <Button  className={css.back} type="link" icon={<ThunderboltOutlined/>}/>
         </Popconfirm>
@@ -154,6 +178,7 @@ function Editor(props) {
           ))}
         </div>
         <NodeConfig doRefresh={handleRefresh}/>
+        <ContextPanel pipelineId={params.id}/>
       </div>
       {visible && <PipeForm onCancel={() => setVisible(false)}/>}
       <Console/>

@@ -27,7 +27,7 @@ function Ask(props) {
       if (item.type !== 'upload') params[item.variable] = data[item.variable]
     }
     setLoading(true)
-    http.patch('/api/pipeline/do/', {id: S.record.id, token: S.token, params})
+    http.patch('/api/pipeline/do/', {id: S.record.id, token: S.token, params, dry_run: !!S.dryRun})
       .then(res => {
         S.dynamicParams = null
       }, () => setLoading(false))

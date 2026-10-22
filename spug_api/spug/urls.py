@@ -56,6 +56,7 @@ urlpatterns = [
     path('file/', include('apps.file.urls')),
     path('credential/', include('apps.credential.urls')),
     path('pipeline/', include('apps.pipeline.urls')),
+    path('ops/', include('apps.ops.urls')),
     path('apis/', include('apps.apis.urls')),
     # ---- 前端静态托管（官方由 Nginx 承担，单进程部署直接在 Django 内完成）----
     # /static/* -> 编译产物的 static 目录

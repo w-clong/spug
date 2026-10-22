@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     'apps.pipeline',
     'apps.repository',
     'apps.deploy',
+    'apps.ops',
     'channels',
 ]
 
@@ -124,6 +125,8 @@ SCHEDULE_WORKER_KEY = 'spug:schedule:worker'
 MONITOR_KEY = 'spug:monitor'
 MONITOR_WORKER_KEY = 'spug:monitor:worker'
 EXEC_WORKER_KEY = 'spug:exec:worker'
+# pyinfra 状态模块任务队列（与 Shell/Python 任务共用 worker 线程池）
+STATE_WORKER_KEY = 'spug:state:worker'
 EXEC_RESULT_KEY = 'spug:exec:result'
 REQUEST_KEY = 'spug:request'
 BUILD_KEY = 'spug:build'

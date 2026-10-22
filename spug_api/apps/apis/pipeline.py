@@ -71,7 +71,10 @@ def trigger(request, pipeline_id):
     record = PipeHistory.make(pipe, fill_node_targets(copy.deepcopy(nodes)), pipe.created_by, token, trigger='api')
 
     rds.set(_marker_key(token), pipe.id, RESULT_TTL)
-    executor = NodeExecutor(rds, token, nodes, params, pipe_name=pipe.name, history_id=record.id)
+    # 外部触发可选择只做 Dry-run 巡检（不修改主机）
+    dry_run = bool(body.get('dry_run'))
+    executor = NodeExecutor(rds, token, nodes, params, pipe_name=pipe.name, history_id=record.id,
+                            dry_run=dry_run, pipeline_id=pipeline_id)
     executor.helper.ttl = RESULT_TTL
     Thread(target=executor.run).start()
     return api_response({'token': token}, status=202)

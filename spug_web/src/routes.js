@@ -45,6 +45,11 @@ import WelcomeIndex from './pages/welcome/index';
 import WelcomeInfo from './pages/welcome/info';
 import PipelineIndex from './pages/pipeline';
 import PipelineEditor from './pages/pipeline/Editor';
+import OpsChanges from './pages/ops/changes';
+import OpsTemplates from './pages/ops/templates';
+import OpsBaselines from './pages/ops/baselines';
+import OpsVariables from './pages/ops/variables';
+import OpsDynamicGroups from './pages/ops/dynamic-groups';
 
 export default [
   {icon: <DesktopOutlined/>, title: t('工作台'), path: '/home', component: HomeIndex},
@@ -78,6 +83,16 @@ export default [
     auth: 'schedule.schedule.view',
     path: '/schedule',
     component: ScheduleIndex
+  },
+  {
+    icon: <DeploymentUnitOutlined/>, title: t('运维增强'),
+    auth: 'pipeline.pipeline.view|host.host.view', child: [
+      {title: t('变更日志'), auth: 'host.host.view', path: '/ops/changes', component: OpsChanges},
+      {title: t('配置模板'), auth: 'pipeline.pipeline.view', path: '/ops/templates', component: OpsTemplates},
+      {title: t('基线管理'), auth: 'pipeline.pipeline.view', path: '/ops/baselines', component: OpsBaselines},
+      {title: t('变量管理'), auth: 'host.host.view', path: '/ops/variables', component: OpsVariables},
+      {title: t('动态分组'), auth: 'host.host.view', path: '/ops/dynamic-groups', component: OpsDynamicGroups},
+    ]
   },
   {
     icon: <DeploymentUnitOutlined/>, title: t('配置中心'), auth: 'config.env.view|config.src.view|config.app.view', child: [

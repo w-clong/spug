@@ -1,9 +1,16 @@
-﻿venv
+venv
 .venv-win
+.venv-pyinfra
 .uv-cache
+.downloads
+.runtime-test
+runtime
 build
 dist
 data
+.tmp-data
 __pycache__
 *.pyc
 
+.npm-cache
+.portable-test

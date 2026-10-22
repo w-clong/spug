@@ -84,6 +84,7 @@ class DoView(View):
     def post(self, request):
         form, error = JsonParser(
             Argument('id', type=int, help='参数错误'),
+            Argument('dry_run', type=bool, default=False),
         ).parse(request.body)
         if error is None:
             pipe = Pipeline.objects.get(pk=form.id)
@@ -129,7 +130,9 @@ class DoView(View):
                 record = PipeHistory.make(pipe, nodes, request.user, token)
                 rds = get_redis_connection()
                 executor = NodeExecutor(rds, token, json.loads(pipe.nodes), pipe_name=pipe.name,
-                                        language=get_request_language(request), history_id=record.id)
+                                        language=get_request_language(request), history_id=record.id,
+                                        dry_run=form.dry_run, operator=request.user.nickname,
+                                        pipeline_id=pipe.id)
                 Thread(target=executor.run).start()
                 response = AttrDict(token=token, nodes=nodes)
             return json_response(response)
@@ -141,6 +144,7 @@ class DoView(View):
             Argument('id', type=int, help='参数错误'),
             Argument('token', help='参数错误'),
             Argument('params', type=dict, help='参数错误'),
+            Argument('dry_run', type=bool, default=False),
         ).parse(request.body)
         if error is None:
             for k, v in form.params.items():
@@ -158,7 +162,9 @@ class DoView(View):
             rds = get_redis_connection()
 
             executor = NodeExecutor(rds, form.token, nodes, form.params, pipe_name=pipe.name,
-                                    language=get_request_language(request), history_id=record.id)
+                                    language=get_request_language(request), history_id=record.id,
+                                    dry_run=form.dry_run, operator=request.user.nickname,
+                                    pipeline_id=pipe.id)
             Thread(target=executor.run).start()
             return json_response()
         return json_response(error=error)
