@@ -181,7 +181,13 @@ class NotifyMixin:
 
     @classmethod
     def send_deploy_notify(cls, req, action=None):
-        rst_notify = json.loads(req.deploy.rst_notify)
+        # rst_notify 可能为空（历史数据/未配置通知），不能让它把整个发布流程带崩
+        try:
+            rst_notify = json.loads(req.deploy.rst_notify or '{}')
+        except (TypeError, ValueError):
+            rst_notify = {}
+        if not rst_notify or rst_notify.get('mode', '0') == '0':
+            return
         host_ids = json.loads(req.host_ids) if isinstance(req.host_ids, str) else req.host_ids
         if rst_notify['mode'] != '0' and rst_notify.get('value'):
             url = rst_notify['value']
@@ -237,6 +243,30 @@ class KitMixin:
         return cls.regex.sub(fr'\1\033[{mode}{prefix}\3\033[0m\4', message)
 
 
+def normalize_script(text):
+    """把 Windows 换行（CRLF/CR）统一成 LF。
+
+    在 Windows 上编辑的多行执行内容会带 '\\r'，远端 bash 会把它当成参数的一部分，
+    例如 `mkdir /tmp/test\\r` 会创建名字里带 \\r 的目录、`unzip ...\\r` 也可能找不到文件。
+    """
+    if not text:
+        return text
+    return text.replace('\r\n', '\n').replace('\r', '\n')
+
+
+def _deploy_log_file(deploy_key, key):
+    """部署控制台日志缓存文件路径。
+
+    deploy_key 形如 spug:request:1，host key 是主机 id；直接拼接 ':' 在 Windows
+    上是非法文件名（NTFS 不允许冒号），会导致发布一开始就 OSError、界面卡在
+    “等待调度”。这里统一把非法字符替换掉，读写共用同一套规则。
+    """
+    name = f'{deploy_key}:{key}'
+    for ch in ':*?"<>|':
+        name = name.replace(ch, '_')
+    return os.path.join(settings.DEPLOY_DIR, name)
+
+
 class Helper(NotifyMixin, KitMixin):
     def __init__(self, rds, rds_key, language='zh'):
         self.rds = rds
@@ -288,10 +318,10 @@ class Helper(NotifyMixin, KitMixin):
         for key in outputs.keys():
             if key in hit_keys:
                 continue
-            file_name = os.path.join(settings.DEPLOY_DIR, f'{deploy_key}:{key}')
+            file_name = _deploy_log_file(deploy_key, key)
             if not os.path.exists(file_name):
                 continue
-            with open(file_name, newline='\r\n') as f:
+            with open(file_name, newline='\r\n', encoding='utf-8', errors='replace') as f:
                 line = f.readline()
                 while line:
                     status, data = line.split(',', 1)
@@ -315,14 +345,15 @@ class Helper(NotifyMixin, KitMixin):
         if key in self.files:
             return self.files[key]
         os.makedirs(settings.DEPLOY_DIR, exist_ok=True)
-        file = open(os.path.join(settings.DEPLOY_DIR, f'{self.rds_key}:{key}'), 'w')
+        # 显式 utf-8：Windows 默认 GBK，写中文/emoji 会 UnicodeEncodeError
+        file = open(_deploy_log_file(self.rds_key, key), 'w', encoding='utf-8', errors='replace')
         self.files[key] = file
         return file
 
     def get_cross_env(self, key):
         file = os.path.join(settings.DEPLOY_DIR, key)
         if os.path.exists(file):
-            with open(file, 'r') as f:
+            with open(file, 'r', encoding='utf-8') as f:
                 return json.loads(f.read())
         return {}
 
@@ -338,7 +369,7 @@ class Helper(NotifyMixin, KitMixin):
                 file_envs[k] = v
 
         file = os.path.join(settings.DEPLOY_DIR, key)
-        with open(file, 'w') as f:
+        with open(file, 'w', encoding='utf-8') as f:
             f.write(json.dumps(file_envs))
 
     def add_callback(self, func):

@@ -9,13 +9,14 @@ from libs import json_response, JsonParser, Argument, human_datetime, auth, Attr
 from apps.deploy.models import DeployRequest
 from apps.app.models import Deploy, DeployExtend2
 from apps.repository.models import Repository
-from apps.deploy.utils import dispatch, Helper
+from apps.deploy.utils import dispatch, Helper, needs_local_stage
 from libs.locale import get_request_language
 from apps.host.models import Host
 from collections import defaultdict
 from threading import Thread
 from datetime import datetime
 import subprocess
+import shutil
 import json
 import os
 
@@ -107,9 +108,9 @@ class RequestDetailView(View):
         outputs = {x.id: {'id': x.id, 'title': x.name, 'data': ''} for x in hosts}
         outputs['local'] = {'id': 'local', 'data': ''}
         if req.deploy.extend == '2':
-            s_actions = json.loads(req.deploy.extend_obj.server_actions)
             h_actions = json.loads(req.deploy.extend_obj.host_actions)
-            if not s_actions:
+            # 服务端阶段除了「服务端动作」，本地路径的数据传输也需要（要先打包）
+            if not needs_local_stage(req.deploy):
                 outputs.pop('local', None)
             if not h_actions and 'local' in outputs:
                 outputs = {'local': outputs['local']}
@@ -165,9 +166,9 @@ class RequestDetailView(View):
                     with_local = True
                     outputs['local'] = {'id': 'local', 'data': Helper.term_message('等待初始化...        ')}
             elif req.deploy.extend == '2':
-                s_actions = json.loads(req.deploy.extend_obj.server_actions)
                 h_actions = json.loads(req.deploy.extend_obj.host_actions)
-                if s_actions:
+                # 服务端阶段：服务端动作，或本地路径的数据传输（需要先打包）
+                if needs_local_stage(req.deploy):
                     if deploy_status.get('local') == '2':
                         outputs['local'] = {
                             'id': 'local',
@@ -360,13 +361,28 @@ def do_upload(request):
     if file and deploy_id:
         dir_name = os.path.join(repos_dir, deploy_id)
         file_name = datetime.now().strftime("%Y%m%d%H%M%S")
-        command = f'mkdir -p {dir_name} && cd {dir_name} && ls | sort  -rn | tail -n +11 | xargs rm -rf'
-        code, outputs = subprocess.getstatusoutput(command)
-        if code != 0:
-            return json_response(error=outputs)
+        # 不能用 `mkdir -p`：Windows 的 cmd.exe 没有 -p 语法，会把 -p 当成目录名，
+        # 报「子目录或文件 -p 已经存在」。目录创建与旧文件清理都改为纯 Python。
+        os.makedirs(dir_name, exist_ok=True)
+        # 先写入本次上传，再清理，保证「包含本次」只保留最近 10 个
         with open(os.path.join(dir_name, file_name), 'wb') as f:
             for chunk in file.chunks():
                 f.write(chunk)
+        try:
+            # 每个部署只保留最近 10 个上传文件（与原 `ls | sort -rn | tail -n +11` 等价）
+            entries = sorted(os.listdir(dir_name), reverse=True)
+            for name in entries[10:]:
+                path = os.path.join(dir_name, name)
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+        except OSError:
+            # 清理失败不应让本次上传失败
+            pass
         return json_response(file_name)
     else:
         return HttpResponseBadRequest()

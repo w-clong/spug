@@ -17,15 +17,16 @@ Spug是面向中小型企业设计的轻量级无Agent的自动化运维平台�
 
 ## 快速开始
 
-需要 Docker 20.10.10 及以上版本和 Compose 插件。镜像支持 amd64 / arm64，已内置后端与前端，容器启动时不再下载任何东西。
+本项目为 **Windows x64 单机便携版**：内置私有 Python runtime，不写注册表、不改 PATH，
+被管 Linux 主机无需安装任何额外组件。解压后双击 `Spug.exe` 即可运行，
+默认监听 `0.0.0.0:9000`，首次启动自动建库并创建管理员 `admin / admin`。
 
-```bash
-curl -fsSLO https://raw.githubusercontent.com/openspug/spug/4.0/docker-compose.yml
-docker compose up -d
-docker compose logs spug | grep password
+```powershell
+# 从源码构建便携包（需要 Python 3.12 与 Node.js）
+powershell -ExecutionPolicy Bypass -File .\build-portable.ps1
 ```
 
-用浏览器打开 `http://<服务器地址>/`，账号 `admin`，密码是最后一条命令输出的随机密码（首次启动时生成）。国内使用请先把 [docker-compose.yml](./docker-compose.yml) 里的 `TZ` 改为 `Asia/Shanghai`；访问 GitHub、Docker Hub 不稳定时，可按[安装文档](https://ops.spug.cc/docs/install-docker/)的方式安装。
+运行、配置与升级说明见 [使用说明](docs/usage-zh.md)；架构与改造记录见 [ops-fork.md](docs/ops-fork.md)。
 
 ## 🔥推送助手
 
@@ -54,15 +55,17 @@ docker compose logs spug | grep password
 
 ## 环境
 
-* Python 3.8+
+* Windows x64（便携包已内置 Python 3.12 runtime）
+* Python 3.12（仅从源码构建时需要）
 * Django 4.2
-* Node.js 18+
+* Node.js 18+（仅构建前端时需要）
 * React 16.13
-* Redis 5.0+
+* 无需 MySQL / Redis / Nginx
 
 ## 安装文档
 
-- 官网地址：https://ops.spug.cc/docs/install-docker/
+- 使用说明：[docs/usage-zh.md](docs/usage-zh.md)
+- 改造说明：[docs/ops-fork.md](docs/ops-fork.md)
 - 使用文档：https://ops.spug.cc/docs/about-spug/
 - 更新日志：https://ops.spug.cc/docs/change-log/
 - 常见问题：https://ops.spug.cc/docs/faq/

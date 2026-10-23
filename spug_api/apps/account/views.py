@@ -189,6 +189,10 @@ def login(request):
         Argument('type', required=False)
     ).parse(request.body)
     if error is None:
+        # 前端普通登录不传 type，必须归一化为默认值：否则 History.objects.create(type=None)
+        # 会显式写入 NULL，绕过模型 default='default'，触发
+        # NOT NULL constraint failed: login_histories.type，导致登录直接失败
+        form.type = form.type or 'default'
         handle_response = partial(handle_login_record, request, form.username, form.type)
         user = User.objects.filter(username=form.username, type=form.type, is_deleted=False).first()
         if user and not user.is_active:
@@ -225,7 +229,8 @@ def handle_login_record(request, username, login_type, error=None):
     user_agent = user_agents.parse(request.headers.get('User-Agent'))
     History.objects.create(
         username=username,
-        type=login_type,
+        # 显式兜底：create(type=None) 会写入 NULL 并绕过字段默认值
+        type=login_type or 'default',
         ip=x_real_ip,
         agent=user_agent,
         is_success=False if error else True,

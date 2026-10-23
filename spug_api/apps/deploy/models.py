@@ -67,7 +67,11 @@ class DeployRequest(models.Model, ModelMixin):
                     p.unlink()
                 except FileNotFoundError:
                     pass
-        for p in Path(settings.DEPLOY_DIR).glob(f'{self.deploy_key}:*'):
+        # 控制台日志缓存文件名里的 ':' 在 Windows 上会被替换成 '_'，这里按同样规则清理
+        safe_key = self.deploy_key
+        for ch in ':*?"<>|':
+            safe_key = safe_key.replace(ch, '_')
+        for p in Path(settings.DEPLOY_DIR).glob(f'{safe_key}_*'):
             try:
                 p.unlink()
             except FileNotFoundError:

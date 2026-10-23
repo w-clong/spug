@@ -14,6 +14,13 @@ from apps.ops.models import (Baseline, ChangeRecord, ConfigTemplate, ConfigTempl
                              DynamicGroup, GroupVariable, HostFact, HostVariable)
 
 
+def _to_bool(value):
+    """GET 查询参数兼容 1/true/yes/on 等写法（JsonParser 的 type=bool 只认 true/false）。"""
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ('1', 'true', 'yes', 'on')
+
+
 class ModuleView(View):
     @auth('exec.task.do')
     def get(self, request):
@@ -26,7 +33,7 @@ class FactView(View):
     def get(self, request):
         form, error = JsonParser(
             Argument('host_id', type=int, required=False),
-            Argument('with_meta', type=bool, default=False),
+            Argument('with_meta', default=False, handler=_to_bool),
         ).parse(request.GET)
         if error:
             return json_response(error=error)
@@ -331,8 +338,8 @@ class ChangeLogView(View):
             Argument('page_size', type=int, default=20),
             Argument('host_id', type=int, required=False),
             Argument('source', required=False),
-            Argument('only_changed', type=bool, default=False),
-            Argument('only_failed', type=bool, default=False),
+            Argument('only_changed', default=False, handler=_to_bool),
+            Argument('only_failed', default=False, handler=_to_bool),
         ).parse(request.GET)
         if error:
             return json_response(error=error)

@@ -1,4 +1,4 @@
-﻿# Copyright: (c) OpenSpug Organization. https://github.com/openspug/spug
+# Copyright: (c) OpenSpug Organization. https://github.com/openspug/spug
 # Copyright: (c) <spug.dev@gmail.com>
 # Released under the AGPL-3.0 License.
 from django.conf import settings
@@ -446,6 +446,7 @@ class NodeExecutor:
         return is_success
 
     def _do_data_transfer(self, node):
+        """数据传输（主机→主机）：SFTP 拉取源目录 → SFTP 推送到各目标主机。"""
         self.helper.send_info(node.id, '开始执行\r\n', 'processing')
         node.source = source = AttrDict(node.source)
         node.destination = destination = AttrDict(node.destination)
@@ -453,25 +454,20 @@ class NodeExecutor:
         try:
             host = Host.objects.get(pk=source.target)
             os.makedirs(local_dir)
-            remote_dir = f'{host.username}@{host.hostname}:{source.path}'
             with host.get_ssh() as ssh:
                 code, _ = ssh.exec_command_raw(f'[ -f {shlex.quote(source.path)} ]')
             if code == 0:
-                remote_dir = f'{host.username}@{host.hostname}:{os.path.dirname(source.path)}'
+                remote_dir = os.path.dirname(source.path)
                 local_path = os.path.join(local_dir, os.path.basename(source.path))
             else:
-                local_path = local_dir + '/'
+                remote_dir = source.path
+                local_path = local_dir
 
-            with tempfile.NamedTemporaryFile(mode='w') as fp:
-                fp.write(host.pkey or AppSetting.get('private_key'))
-                fp.flush()
-
-                command = ['sshfs', '-o', 'ro', '-o', f'ssh_command=ssh -p {host.port} -i {fp.name}', remote_dir, local_dir]
-                task = subprocess.run(command, capture_output=True)
-                if task.returncode != 0:
-                    raise Exception(task.stderr.decode())
+            from libs.sftp_transfer import download_tree
+            with host.get_ssh() as ssh:
+                download_tree(ssh, remote_dir, local_dir)
         except Exception as e:
-            remove_mount_dir(local_dir)
+            shutil.rmtree(local_dir, ignore_errors=True)
             for host_id in destination.targets:
                 self.helper.send_error(f'{node.id}.{host_id}', f'{e}')
             self.helper.send_error(node.id, f'{e}')
@@ -483,35 +479,27 @@ class NodeExecutor:
                 t = executor.submit(self._data_transfer, node, host, local_path, destination.path)
                 threads.append(t)
             results = [x.result() for x in futures.as_completed(threads)]
-        remove_mount_dir(local_dir)
+        shutil.rmtree(local_dir, ignore_errors=True)
         state = 'success' if all(results) else 'error'
         self.helper.send_status(node.id, state)
         self.run(node, state)
 
     def _data_transfer(self, node, host, local_path, remote_path):
+        """通过 SFTP 上传本地文件或目录内容到远端（不依赖 rsync）。"""
         timestamp = time.time()
         key = f'{node.id}.{host.id}'
-        pid_key = f'{self.token}.{node.id}.{host.id}'
         self.helper.send_info(key, '开始传输数据\r\n', 'processing')
         try:
-            with tempfile.NamedTemporaryFile(mode='w') as fp:
-                fp.write(host.pkey or AppSetting.get('private_key'))
-                fp.write('\n')
-                fp.flush()
-
-                options = '-avz --progress -h'
-                # 命令交给控制端本地 bash 执行，路径来自节点配置，必须转义
-                argument = f'{shlex.quote(local_path)} {shlex.quote(f"{host.username}@{host.hostname}:{remote_path}")}'
-                ssh_command = shlex.quote(f'ssh -p {host.port} -o StrictHostKeyChecking=no -i {fp.name}')
-                command = f'rsync {options} -e {ssh_command} {argument}'
-                with Executor() as et:
-                    self.rds.set(pid_key, f'local.{et.pid}', 3600)
-                    is_success = self.helper.local_exec(key, et, command)
+            from libs.sftp_transfer import upload_file, upload_tree
+            with host.get_ssh() as ssh:
+                if os.path.isdir(local_path):
+                    upload_tree(ssh, local_path, remote_path)
+                else:
+                    upload_file(ssh, local_path, remote_path)
+            is_success = True
         except Exception as e:
             self.helper.send_error(key, f'Exception: {e}')
             return False
-        finally:
-            self.rds.delete(pid_key)
         if is_success:
             self.helper.send_success(key, '传输完成', start_time=timestamp)
         return is_success

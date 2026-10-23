@@ -22,6 +22,19 @@ from .inventory import build_inventory, inject_private_keys
 from .modules import build_plan, normalize
 from .result import HostResult, RunSummary
 
+# 远端非交互式 sh 的 PATH 常常只有 /bin:/usr/bin，缺少 sbin 目录，
+# 会导致 dnf/apt/systemctl 等报 "command not found"，这里显式补全
+DEFAULT_REMOTE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+# pyinfra 通过 `stat -c ... %N` / `ls -ld` 解析文件与链接信息，而部分发行版（如 CentOS 7
+# 配合中文 locale）会把 %N 的路径用本地化引号包裹（“...”），导致 pyinfra 误判
+# link_target 不一致、软链接每次都被重建（非幂等）。固定 LANG=C 保证输出可解析。
+DEFAULT_REMOTE_ENV = {
+    'PATH': DEFAULT_REMOTE_PATH,
+    'LANG': 'C',
+    'LC_ALL': 'C',
+}
+
 
 class _EventCallback(BaseStateCallback):
     """把 pyinfra 生命周期事件转成 (host_id, kind, message)。"""
@@ -51,9 +64,27 @@ class _EventCallback(BaseStateCallback):
         names = self._op_names(state, op_hash)
         self.emit(self._host_id(host), 'success', f'{names} 执行成功')
 
+    def _op_error_detail(self, state, host, op_hash):
+        """取操作失败的真实原因（远端 stderr），避免只看到“No hosts remaining!”。"""
+        try:
+            op_data = state.ops[host][op_hash]
+            meta = op_data.operation_meta
+            if meta.is_complete():
+                detail = (meta.stderr or '').strip()
+                if not detail:
+                    detail = (meta.stdout or '').strip()
+                return detail[-800:]
+        except Exception:
+            pass
+        return ''
+
     def operation_host_error(self, state, host, op_hash, retry_count=0, max_retries=0):
         names = self._op_names(state, op_hash)
-        self.emit(self._host_id(host), 'error', f'{names} 执行失败')
+        detail = self._op_error_detail(state, host, op_hash)
+        message = f'{names} 执行失败'
+        if detail:
+            message += f'\n{detail}'
+        self.emit(self._host_id(host), 'error', message)
 
     def host_connect_error(self, state, host, error):
         self.emit(self._host_id(host), 'error', f'SSH 连接失败: {error}')
@@ -123,7 +154,7 @@ class StateRunner:
                     connected.append(host)
 
             if connected:
-                # 状态模块分发依赖 os_family / os，实时采集（不写入缓存）
+                # 状态模块分发依赖 os_family / os_version / 包管理器可用性，实时采集（不写入缓存）
                 for host in connected:
                     py_host = py_hosts[host.id]
                     item = {}
@@ -133,6 +164,18 @@ class StateRunner:
                         except Exception:
                             pass
                     item['os_family'] = facts_kernel.family_of(item)
+                    release = item.get('os_release')
+                    if isinstance(release, dict):
+                        version = release.get('version_id') or release.get('version')
+                        if version:
+                            item['os_version'] = version
+                    # 包管理器可用性：CentOS 7 只有 yum，必须探测而不能按发行版猜
+                    for key in ('which_dnf', 'which_yum', 'which_apt', 'which_apk'):
+                        try:
+                            item[key] = py_host.get_fact(
+                                facts_kernel.FACT_DEFS[key], *facts_kernel.FACT_ARGS[key])
+                        except Exception:
+                            pass
                     facts_map[host.id] = item
 
                 if self.collect_facts:
@@ -146,6 +189,11 @@ class StateRunner:
                 plan = self._template_plan(connected, facts_map) or build_plan(
                     connected, self.module, self.params, facts_map)
                 for op_func, kwargs, op_hosts in plan:
+                    # 远端非交互式 sh 的 PATH 可能不含 /usr/sbin，且本地化 locale 会让
+                    # stat/ls 输出无法被 pyinfra 解析，统一注入固定的远端环境
+                    env = dict(DEFAULT_REMOTE_ENV)
+                    env.update(kwargs.get('_env') or {})
+                    kwargs = dict(kwargs, _env=env)
                     if self.sudo:
                         kwargs = dict(kwargs, _sudo=True)
                     # add_op 接收的必须是 pyinfra Host，Spug Host 仅用于编排与日志
@@ -160,12 +208,18 @@ class StateRunner:
                 self._collect_results(state, py_hosts, summary)
         except Exception as e:
             # 任何未预期异常都要落成失败结果，绝不允许拖垮调用方线程
+            # pyinfra 批量失败时只会抛 "No hosts remaining!"，这里把每台主机
+            # 最后一次操作的真实报错补上，避免用户看不到原因
+            detail_map = self._last_op_errors(state, py_hosts)
             for host in self.hosts:
                 existing = summary.get(host.id)
-                if existing is None:
-                    summary.results.append(HostResult(
-                        host_id=host.id, host_name=host.name, failed=True, msg=f'Exception: {e}'))
-            self._emit(None, 'error', f'执行异常: {e}')
+                if existing is not None:
+                    continue
+                detail = detail_map.get(host.id) or str(e)
+                summary.results.append(HostResult(
+                    host_id=host.id, host_name=host.name, failed=True,
+                    msg=f'执行失败: {detail}'))
+                self._emit(host.id, 'error', f'执行失败: {detail}')
         finally:
             try:
                 state.set_stage(StateStage.Disconnect)
@@ -177,6 +231,25 @@ class StateRunner:
             self._record_changes(summary)
         self.elapsed = round(time.time() - started, 2)
         return summary
+
+    def _last_op_errors(self, state, py_hosts):
+        """从 pyinfra state 提取每台主机最后一次失败操作的真实报错。"""
+        result = {}
+        for host_id, py_host in py_hosts.items():
+            best = ''
+            try:
+                for op_hash, op_data in (state.ops.get(py_host) or {}).items():
+                    meta = op_data.operation_meta
+                    if not meta.is_complete() or meta.did_succeed():
+                        continue
+                    detail = (meta.stderr or '').strip() or (meta.stdout or '').strip()
+                    if detail:
+                        best = detail[-800:]
+            except Exception:
+                continue
+            if best:
+                result[host_id] = best
+        return result
 
     def _template_plan(self, hosts, facts_map):
         """file 模块 + template_id：按主机变量/Facts 渲染 Jinja2，内容相同的主机合并为一个 op。"""

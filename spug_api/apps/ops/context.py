@@ -40,14 +40,9 @@ SOURCE_LABELS = {
 
 
 def _global_vars():
-    from apps.setting.utils import AppSetting
-    value = AppSetting.get_default('global_variables', {})
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except ValueError:
-            value = {}
-    return value if isinstance(value, dict) else {}
+    # 与状态模块渲染共用同一实现，避免两处逻辑漂移
+    from apps.ops.kernel.variables import _global_vars as impl
+    return impl()
 
 
 def _pipeline_vars(pipeline_id):
@@ -77,16 +72,10 @@ def _host_vars(host_id):
 
 
 def _env_vars(host):
-    from apps.ops.models import GroupVariable
+    from apps.ops.kernel.variables import _group_vars as impl
     if host is None:
         return {}
-    group_ids = list(host.groups.values_list('id', flat=True))
-    if not group_ids:
-        return {}
-    result = {}
-    for item in GroupVariable.objects.filter(group_id__in=group_ids).order_by('group_id'):
-        result[item.key] = item.value
-    return result
+    return impl(host)
 
 
 def _fact_vars(host_id):
@@ -95,16 +84,20 @@ def _fact_vars(host_id):
     if not host_id:
         return {}, None
     values = facts_kernel.load(host_id)
+    # 只暴露已注册的 Facts 字段，禁止动态拾取任意 JSON key（与变量面板口径一致）
     result = {k: values[k] for k in FACTS_META if k in values}
     updated = HostFact.objects.filter(host_id=host_id).order_by('-updated_at').values_list('updated_at', flat=True).first()
     return result, updated.strftime('%Y-%m-%d %H:%M:%S') if updated else None
 
 
-def get_merged_context(pipeline_id=None, host_id=None):
+def get_merged_context(pipeline_id=None, host_id=None, facts=None):
     """返回 (context_dict, variables_list, facts_updated_at)。
 
     variables_list 每项：{name, value, source, source_label}
     未指定 host_id 时只返回变量定义（value 为空），Facts 使用 FACTS_META 的示例值。
+
+    facts 用于传入「本次执行实时采集」的 Facts（例如状态模块执行前的探测结果），
+    不传则读取数据库缓存。合并优先级与 kernel.variables.collect 完全一致。
     """
     from apps.host.models import Host
 
@@ -125,6 +118,9 @@ def get_merged_context(pipeline_id=None, host_id=None):
     facts_updated_at = None
     if host is not None:
         fact_values, facts_updated_at = _fact_vars(host.id)
+        if facts:
+            # 实时采集值优先于缓存值，但同样作为只读 Facts 层
+            fact_values.update(facts)
         apply(fact_values, 'fact')
     else:
         # 无主机：只展示注册过的 Facts 元信息
@@ -134,11 +130,12 @@ def get_merged_context(pipeline_id=None, host_id=None):
 
     variables = []
     for key, value in merged.items():
+        source = sources.get(key, 'global')
         variables.append({
             'name': key,
             'value': '' if value is None else (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)),
-            'source': sources.get(key, 'global'),
-            'source_label': SOURCE_LABELS.get(sources.get(key, 'global'), '全局'),
+            'source': source,
+            'source_label': SOURCE_LABELS.get(source, '全局'),
         })
     return merged, variables, facts_updated_at
 

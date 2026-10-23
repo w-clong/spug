@@ -18,9 +18,29 @@ from libs.locale import translate, translate_choice
 from paramiko.ssh_exception import BadAuthenticationType
 from openpyxl import load_workbook, Workbook
 from threading import Thread
+from django.db import close_old_connections
 import socket
 import uuid
 import json
+
+
+def _start_facts_collection(host_ids):
+    """后台采集主机系统信息（Facts），失败不影响主流程。"""
+
+    def _run():
+        try:
+            from apps.ops.kernel.facts_runner import refresh
+            from apps.host.models import Host as HostModel
+            hosts = list(HostModel.objects.filter(id__in=host_ids))
+            if hosts:
+                refresh(hosts)
+        except Exception:
+            pass
+        finally:
+            close_old_connections()
+
+    if host_ids:
+        Thread(target=_run, daemon=True).start()
 
 
 class HostView(View):
@@ -90,6 +110,8 @@ class HostView(View):
             host.groups.set(group_ids)
             response = host.to_view()
             response['group_ids'] = group_ids
+            # 后台自动采集一次系统信息（Facts），让主机列表立刻能看到系统版本等快照
+            _start_facts_collection([host.id])
             return json_response(response)
         return json_response(error=error)
 

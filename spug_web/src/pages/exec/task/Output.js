@@ -59,38 +59,74 @@ function OutView(props) {
   }, [])
 
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/subscribe/${store.token}/?x-token=${X_TOKEN}`);
-    socketRef.current = socket
-    socket.onopen = () => {
-      const message = '\r\x1b[K\x1b[36m### Waiting for scheduling ...\x1b[0m'
-      for (let key of Object.keys(store.outputs)) {
-        store.outputs[key].data = message
-      }
-      term.write(message)
-      socket.send('ok');
-      fitPlugin.fit()
-      const formData = fitPlugin.proposeDimensions()
-      formData.token = store.token
-      http.patch('/api/exec/do/', formData)
-    }
-    socket.onmessage = e => {
-      if (e.data === 'pong') {
-        socket.send('ping')
-      } else {
-        _handleData(e.data)
-      }
-    }
-    socket.onclose = () => {
-      for (let key of Object.keys(store.outputs)) {
-        if (store.outputs[key].status === -2) {
-          store.outputs[key].status = -1
+    let closedByUs = false
+    let retry = 0
+    let timer = null
+    let dispatched = false
+
+    function connect() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/subscribe/${store.token}/?x-token=${X_TOKEN}`);
+      socketRef.current = socket
+      socket.onopen = () => {
+        const isReconnect = retry > 0
+        retry = 0
+        if (isReconnect) {
+          // 服务端会回放全部历史日志，先清空避免内容重复
+          for (let key of Object.keys(store.outputs)) {
+            store.outputs[key].data = ''
+            if (store.outputs[key].status === -1) store.outputs[key].status = -2
+          }
+          term.clear()
+          term.write('\r\x1b[K\x1b[33m### 已重新连接，正在回放日志 ...\x1b[0m')
+        } else {
+          const message = '\r\x1b[K\x1b[36m### Waiting for scheduling ...\x1b[0m'
+          for (let key of Object.keys(store.outputs)) {
+            store.outputs[key].data = message
+          }
+          term.write(message)
         }
-        store.outputs[key].data += '\r\n\x1b[31mWebsocket connection failed!\x1b[0m'
-        term.write('\r\n\x1b[31mWebsocket connection failed!\x1b[0m')
+        socket.send('ok');
+        fitPlugin.fit()
+        // 只在首次连接时派发任务，重连绝不能重复执行
+        if (!dispatched) {
+          dispatched = true
+          const formData = fitPlugin.proposeDimensions()
+          formData.token = store.token
+          http.patch('/api/exec/do/', formData)
+        }
+      }
+      socket.onmessage = e => {
+        if (e.data === 'pong') {
+          socket.send('ping')
+        } else {
+          _handleData(e.data)
+        }
+      }
+      socket.onclose = () => {
+        if (closedByUs) return
+        if (retry < 5) {
+          retry += 1
+          term.write(`\r\n\x1b[33m### 连接中断，${retry} 秒后重连（${retry}/5）...\x1b[0m`)
+          timer = setTimeout(connect, retry * 1000)
+          return
+        }
+        for (let key of Object.keys(store.outputs)) {
+          if (store.outputs[key].status === -2) {
+            store.outputs[key].status = -1
+          }
+          store.outputs[key].data += '\r\n\x1b[31mWebsocket connection failed!\x1b[0m'
+          term.write('\r\n\x1b[31mWebsocket connection failed!\x1b[0m')
+        }
       }
     }
-    return () => socket && socket.close()
+
+    connect()
+    return () => {
+      closedByUs = true
+      if (timer) clearTimeout(timer)
+      if (socketRef.current) socketRef.current.close()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

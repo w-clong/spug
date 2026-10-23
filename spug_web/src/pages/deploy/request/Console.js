@@ -105,32 +105,62 @@ function Console(props) {
   }
 
   function _makeSocket(index = 0) {
-    const token = props.request.id;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/request/${token}/?x-token=${X_TOKEN}`);
-    socket.onopen = () => socket.send(String(index));
-    socket.onmessage = e => {
-      if (e.data === 'pong') {
-        socket.send(String(index))
-      } else {
-        index += 1;
-        const {key, data, status} = JSON.parse(e.data);
-        if (!outputs[key]) return
-        if (!lds.isNil(data)) {
-          outputs[key].data += data
-          if (key === gCurrent) term.write(data)
+    let closedByUs = false
+    let retry = 0
+    let timer = null
+    let currentSocket = null
+
+    function open(fromIndex) {
+      const token = props.request.id;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/request/${token}/?x-token=${X_TOKEN}`);
+      currentSocket = socket
+      socket.onopen = () => {
+        retry = 0
+        socket.send(String(fromIndex));
+      }
+      socket.onmessage = e => {
+        if (e.data === 'pong') {
+          socket.send(String(fromIndex))
+        } else {
+          fromIndex += 1;
+          const {key, data, status} = JSON.parse(e.data);
+          if (!outputs[key]) return
+          if (!lds.isNil(data)) {
+            outputs[key].data += data
+            if (key === gCurrent) term.write(data)
+          }
+          if (!lds.isNil(status)) outputs[key].status = status;
         }
-        if (!lds.isNil(status)) outputs[key].status = status;
+      }
+      socket.onclose = () => {
+        if (closedByUs) return
+        if (retry < 5) {
+          retry += 1
+          timer = setTimeout(() => {
+            // 断线期间可能漏日志，重连后从头回放，保证内容完整
+            for (let key of Object.keys(outputs)) outputs[key].data = ''
+            term.reset()
+            open(0)
+          }, retry * 1000)
+          return
+        }
+        const data = '\r\n\x1b[31mWebsocket connection failed!\x1b[0m'
+        for (let key of Object.keys(outputs)) {
+          if (key === gCurrent) term.write(data)
+          outputs[key].data += data
+        }
       }
     }
-    socket.onerror = () => {
-      const data = '\r\n\x1b[31mWebsocket connection failed!\x1b[0m'
-      for (let key of Object.keys(outputs)) {
-        if (key === gCurrent) term.write(data)
-        outputs[key].data += data
+
+    open(index)
+    return {
+      close() {
+        closedByUs = true
+        if (timer) clearTimeout(timer)
+        if (currentSocket) currentSocket.close()
       }
     }
-    return socket
   }
 
   function handleSwitch(key) {

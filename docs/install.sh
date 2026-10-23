@@ -3,7 +3,7 @@
 # Copyright: (c) <spug.dev@gmail.com>
 # Released under the AGPL-3.0 License.
 #
-# Spug 4.x 一键安装脚本（在一台干净的 Linux 上手动部署，适合快速体验；生产环境推荐 Docker 安装：https://ops.spug.cc/docs/install-docker）
+# Spug 4.x 一键安装脚本（在一台干净的 Linux 上手动部署，适合快速体验）
 # 支持 Debian / Ubuntu 与 RHEL 系（CentOS Stream / Rocky / AlmaLinux / Fedora 等），需要 root 权限、Python 3.8 及以上、可访问外网。
 # 可通过环境变量覆盖：SPUG_VERSION（默认 v4.0.1，须与 https://cdn.spug.cc/spug/web_<版本>.tar.gz 配套）、ADMIN_PASSWORD、DB_PASSWORD
 

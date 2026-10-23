@@ -16,6 +16,26 @@ import uuid
 REPOS_DIR = settings.REPOS_DIR
 
 
+def needs_local_stage(deploy):
+    """自定义发布是否需要在 Spug 服务端执行阶段。
+
+    原逻辑只看「服务端动作」，但「数据来源=本地路径」的数据传输动作也必须先在
+    服务端打包，否则主机阶段上传时会因为归档不存在而报 WinError 3。
+    """
+    if deploy.extend != '2':
+        return False
+    extend = deploy.extend_obj
+    try:
+        if json.loads(extend.server_actions or '[]'):
+            return True
+        for action in json.loads(extend.host_actions or '[]'):
+            if action.get('type') == 'transfer' and str(action.get('src_mode')) != '1':
+                return True
+    except (TypeError, ValueError):
+        return False
+    return False
+
+
 def dispatch_all(req):
     """Dispatch a deploy request for all its hosts, used by planned/webhook triggered deploys."""
     host_ids = json.loads(req.host_ids)
@@ -24,16 +44,20 @@ def dispatch_all(req):
         if not req.repository_id:
             with_local = True
     else:
-        if json.loads(req.deploy.extend_obj.server_actions):
-            with_local = True
+        with_local = needs_local_stage(req.deploy)
     dispatch(req, host_ids, with_local)
 
 
 def dispatch(req, deploy_host_ids, with_local, language='zh'):
-    rds = get_redis_connection()
-    rds_key = req.deploy_key
-    keys = deploy_host_ids + ['local'] if with_local else deploy_host_ids
-    helper = Helper.make(rds, rds_key, keys, language)
+    try:
+        rds = get_redis_connection()
+        rds_key = req.deploy_key
+        keys = deploy_host_ids + ['local'] if with_local else deploy_host_ids
+        helper = Helper.make(rds, rds_key, keys, language)
+    except Exception as e:
+        # helper 都没建起来时，至少把异常写进日志，避免界面一直停在“待调度”
+        print(f'deploy dispatch init error: {e}')
+        raise e
 
     try:
         api_token = uuid.uuid4().hex

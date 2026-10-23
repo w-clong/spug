@@ -22,7 +22,14 @@ def refresh(hosts, on_event=None, parallel=10, timeout=10, sync_groups=True):
     if not hosts:
         return {}
     inventory, _ = build_inventory(hosts)
-    state = State(inventory, Config(PARALLEL=parallel, CONNECT_TIMEOUT=timeout, FAIL_PERCENT=100))
+    state = State(inventory, Config(
+        PARALLEL=parallel,
+        CONNECT_TIMEOUT=timeout,
+        FAIL_PERCENT=100,
+        # 固定远端 locale：部分发行版在中文 locale 下 stat/ls 输出带本地化引号，
+        # 会让 pyinfra 的 facts 解析出错
+        ENV={'LANG': 'C', 'LC_ALL': 'C'},
+    ))
     inject_private_keys(state, hosts)
     py_hosts = {host.data.get('spug_id'): host for host in inventory}
     result = {}

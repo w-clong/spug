@@ -1,4 +1,4 @@
-# Copyright: (c) OpenSpug Organization. https://github.com/openspug/spug
+﻿# Copyright: (c) OpenSpug Organization. https://github.com/openspug/spug
 # Copyright: (c) <spug.dev@gmail.com>
 # Released under the AGPL-3.0 License.
 from django.conf import settings
@@ -6,11 +6,12 @@ from libs.utils import AttrDict, render_str, human_seconds_time
 from apps.host.models import Host
 from apps.repository.models import Repository
 from apps.repository.utils import dispatch as build_repository
-from apps.deploy.helper import SpugError
+from apps.deploy.helper import SpugError, normalize_script
 from concurrent import futures
 import json
-import time
 import os
+import posixpath
+import time
 
 BUILD_DIR = settings.BUILD_DIR
 
@@ -92,7 +93,7 @@ def _deploy_ext1_host(req, helper, h_id, env):
         pid = ssh.get_pid()
         if pid:
             helper.save_pid(pid, h_id)
-        base_dst_dir = os.path.dirname(extend.dst_dir)
+        base_dst_dir = posixpath.dirname(extend.dst_dir)
         code, _ = ssh.exec_command_raw(
             f'mkdir -p {extend.dst_repo} {base_dst_dir} && [ -e {extend.dst_dir} ] && [ ! -L {extend.dst_dir} ]')
         if code == 0:
@@ -110,7 +111,9 @@ def _deploy_ext1_host(req, helper, h_id, env):
                 callback = helper.progress_callback(host.id)
                 ssh.put_file(
                     os.path.join(BUILD_DIR, tar_gz_file),
-                    os.path.join(extend.dst_repo, tar_gz_file),
+                    # 远端路径必须用 posixpath：Windows 的 os.path.join 会拼出反斜杠，
+                    # 文件会落到错误文件名，随后 tar 报 “No such file or directory”
+                    posixpath.join(extend.dst_repo, tar_gz_file),
                     callback
                 )
             except Exception as e:
@@ -121,10 +124,10 @@ def _deploy_ext1_host(req, helper, h_id, env):
             helper.send_success(h_id, '完成√\r\n')
 
         # pre host
-        repo_dir = os.path.join(extend.dst_repo, req.spug_version)
+        repo_dir = posixpath.join(extend.dst_repo, req.spug_version)
         if extend.hook_pre_host:
             helper.send_info(h_id, '发布前任务...       \r\n')
-            command = f'cd {repo_dir} && {extend.hook_pre_host}'
+            command = f'cd {repo_dir} && {normalize_script(extend.hook_pre_host)}'
             helper.remote(host.id, ssh, command)
 
         # do deploy
@@ -135,7 +138,7 @@ def _deploy_ext1_host(req, helper, h_id, env):
         # post host
         if extend.hook_post_host:
             helper.send_info(h_id, '发布后任务...       \r\n')
-            command = f'cd {extend.dst_dir} && {extend.hook_post_host}'
+            command = f'cd {extend.dst_dir} && {normalize_script(extend.hook_post_host)}'
             helper.remote(host.id, ssh, command)
 
         human_time = human_seconds_time(time.time() - flag)

@@ -171,6 +171,13 @@ class PubSubConsumer(BaseConsumer):
         self.token = self.scope['url_route']['kwargs']['token']
         self.rds = get_redis_connection()
         self.p = self.rds.pubsub(ignore_subscribe_messages=True)
+        # 先回放已产生的日志（断线重连/晚打开控制台时不丢内容），再订阅实时消息
+        try:
+            backlog = self.rds.lrange(f'spug:state:log:{self.token}', 0, -1) or []
+            for item in backlog:
+                self.send(text_data=str_decode(item))
+        except Exception:
+            pass
         self.p.subscribe(self.token)
 
     def disconnect(self, code):

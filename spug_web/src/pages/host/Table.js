@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { observer } from 'mobx-react';
 import { Table, Modal, Dropdown, Button, Avatar, Tooltip, Space, Tag, Radio, Input, message, Drawer, Card } from 'antd';
-import { PlusOutlined, DownOutlined, SyncOutlined, FormOutlined, ExportOutlined, FileTextOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { PlusOutlined, DownOutlined, SyncOutlined, FormOutlined, ExportOutlined, FileTextOutlined, AppstoreOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Action, TableCard, AuthButton, AuthFragment } from 'components';
 import IPAddress from './IPAddress';
 import { http, hasPermission, blobToExcel, humanDate, t, X_TOKEN } from 'libs';
@@ -22,8 +22,24 @@ function ComTable() {
   const [cardVisible, setCardVisible] = useState(false)
 
   useEffect(() => {
-    http.get('/api/ops/facts/', { params: { with_meta: 1 } }).then(res => setFactsMeta(res || {}))
+    loadFacts()
   }, [])
+
+  function loadFacts() {
+    http.get('/api/ops/facts/', { params: { with_meta: 1 } }).then(res => setFactsMeta(res || {}))
+  }
+
+  function handleRefreshFacts() {
+    const ids = store.dataSource.map(x => x.id)
+    if (!ids.length) return message.warning(t('暂无主机'))
+    setLoading(true)
+    http.post('/api/ops/facts/', { host_ids: ids })
+      .then(() => {
+        message.success(t('已开始采集系统信息，请稍后查看'))
+        setTimeout(loadFacts, 4000)
+      })
+      .finally(() => setLoading(false))
+  }
 
   function showFacts(host) {
     http.get('/api/ops/facts/', { params: { host_id: host.id } }).then(res => {
@@ -187,6 +203,12 @@ function ComTable() {
           type="primary"
           icon={<SyncOutlined/>}
           onClick={() => store.showSync()}>{t('验证')}</AuthButton>,
+        <AuthButton
+          auth="host.host.view"
+          type="primary"
+          icon={<ReloadOutlined/>}
+          loading={loading}
+          onClick={handleRefreshFacts}>{t('刷新Facts')}</AuthButton>,
         <AuthButton
           auth="host.host.view"
           type="primary"

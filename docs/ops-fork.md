@@ -199,6 +199,77 @@ $env:SPUG_DATA_DIR="C:\path\to\data"
 - **前端框架**：按确认使用现有 React + antd4 实现，未引入 Vue。
 - **布局**：已修复内容区无法滚动（外层 100vh + 隐藏滚动条导致高倍缩放时内容被裁），
   变量面板从 fixed 遮罩改为 flex 侧栏（不再遮挡节点配置抽屉）。
+- **零依赖改造**：文件分发（主机→主机、本地上传）由 sshfs+rsync 改为纯 paramiko SFTP；
+  应用发布的构建步骤在无 bash 的 Windows 下走 GitPython + tarfile 的纯 Python 实现
+  （仍需系统安装 git）。
+
+## 8.1 修复记录（问题清单）
+
+| 现象 | 原因 | 修复 |
+|---|---|---|
+| 主机管理一打开就报 `with_meta type must be <class 'bool'>` | `JsonParser` 的 `type=bool` 只接受 `true/false`，前端传 `1` 直接校验失败 | 后端 `Argument` 改用 `handler=_to_bool`，兼容 1/true/yes/on |
+| 文件分发报「需要安装 sshfs」「WinError 2 找不到文件」 | 原实现依赖服务端 sshfs 挂载 + rsync 推送，Windows 没有这两个命令 | 改为纯 paramiko SFTP 递归上传/下载（`libs/sftp_transfer.py`），主机→主机与本地→主机均可用 |
+| 主机列表 Facts 一直「未采集」 | ① with_meta 接口报错导致取不到；② 没有自动采集 | ① 修复接口；② 新增/验证主机后后台自动采集一次；主机列表新增「刷新Facts」按钮 |
+| 状态模块 pkg 失败只显示 `No hosts remaining!` | pyinfra 批量失败时抛出的是汇总信息，真实远端报错被丢弃 | 事件回调与异常兜底逻辑补充远端 stderr，日志直接显示失败原因 |
+| 状态模块 download 报 `Destination /tmp already exists and is not a file` | pyinfra 的 download 要求 dest 必须是文件路径 | dest 以 `/` 结尾时自动拼接 `src` 的文件名 |
+| 应用发布卡在「待调度」 | 发布构建步骤依赖 bash/tar，Windows 缺失时线程静默失败 | ① 无 bash 时改用 GitPython + tarfile 纯 Python 构建；② 清理步骤改用 shutil；③ dispatch 初始化异常也落日志 |
+| 主机管理操作按钮挤压重叠 | 工具栏 `justify-content:flex-end` 且不换行 | 工具栏加 `flex-wrap:wrap; gap:8px`，按钮过多时换行不重叠 |
+| CentOS 7 执行 pkg 报 `sh: dnf: command not found` | 只按发行版族选包管理器，RedHat 族一律用 `dnf`，而 CentOS/RHEL 7 只有 `yum` | Facts 新增 `which_dnf/which_yum/which_apt/which_apk` 实时探测；`_pkg_backend()` 优先用探测结果，回退按大版本（<8 用 yum）；pkg 按 `redhat-dnf`/`redhat-yum` 拆组下发 |
+| 状态模块失败信息被 `No hosts remaining!` 掩盖 | 同上 | 同上（已补远端 stderr） |
+| 远端命令找不到 `dnf/apt/systemctl` | pyinfra 用 `sh -c` 执行，非交互式 PATH 可能缺 `/usr/sbin` | 所有 operation 统一注入 `_env={'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}` |
+| **应用发布一直卡在「发布中」** | `Helper.get_file()` 用 `spug:request:<id>:<host>` 作文件名，**Windows 文件名不允许冒号** → `OSError [Errno 22]`，在写第一行日志前就抛异常 | 新增 `_deploy_log_file()` 统一把 `:*?"<>|` 替换为 `_`，读写共用；`DeployRequest.delete()` 的清理 glob 同步改 |
+| 发布日志写中文/emoji 崩溃 `UnicodeEncodeError: 'gbk'` | Windows 默认 GBK 编码打开文件 | 控制台日志与 cross-env 文件全部显式 `encoding='utf-8'` |
+| 发布主机侧报 `tar: xxx.tar.gz: No such file or directory` | `os.path.join()` 拼远端路径产生反斜杠（`/tmp/repo\a.tar.gz`），文件落到错误名字 | 远端路径统一改用 `posixpath.join/dirname` |
+| 发布通知 `rst_notify` 为空时抛 `TypeError` 并中断整个发布 | `json.loads(None)` | 容错为空 dict 并直接跳过通知 |
+| WebSocket 控制台偶发 `connection failed` | 单进程内批量任务占满事件循环，daphne 默认 20s/30s 心跳超时把连接判死 | ① daphne `ping_interval=30, ping_timeout=120, websocket_connect_timeout=60, handshake_timeout=30`；② 前端断线自动重连（最多 5 次，指数退避），重连不重复派发任务；③ 状态任务日志额外落 redis 列表 `spug:state:log:<token>`，重连时回放历史 |
+| 文件分发慢（44 个文件 7.6s） | 每个文件都重复 `stat/mkdir` 且用手工 chunk 循环 | 目录创建加缓存、改用 `sftp.putfo/getfo`（paramiko 内部流水线）；实测 60 个文件 0.29s（4.8ms/个） |
+| **自定义发布「数据传输」报 `WinError 3 找不到路径: ...repos\1\xxx.tar.gz`** | ① 本地来源的打包调用 `tar -zcf`（bash），Windows 没有 bash/tar；② **即使修好打包，`with_local` 也只在存在「服务端动作」时才为 True**，纯本地路径传输时打包阶段被整体跳过 | ① 新增 `_pack_transfer_source()` 用 `tarfile` 纯 Python 打包；② 新增 `needs_local_stage()`，服务端动作**或**本地路径数据传输都会触发服务端阶段，`views.py` 的派发与 GET 输出列表同步改用 |
+| 数据传输把目标路径写成 `/tmp/` 会删掉 `/tmp` | 主机侧命令是 `rm -rf {目标路径} && mv ...`，`/tmp` 会被整个删除 | 新增 `_assert_safe_dst()`，拦截 `/`、`/tmp`、`/etc` 等系统目录和一级路径，提示改填具体落地路径 |
+| 裁剪 runtime 后 pyinfra 报 `KeyError: 'ssh'` | 删除了 `*.dist-info`，而 pyinfra 的连接器靠 entry_points 注册 | 打包脚本保留 dist-info，只删测试目录与未使用的 django.contrib |
+
+### 包体积 / 小文件优化
+
+只面向 **Windows x64** 的前提下，做了 4 层裁剪（`build-portable.ps1` 的「精简 runtime」步骤）：
+
+1. `django/contrib` 里 `gis/admindocs/flatpages/redirects/sites/humanize/postgres/admin/sitemaps/syndication`
+   在 `INSTALLED_APPS` 中完全没有引用 → 删除；
+2. 各包 `tests` 目录、`Scripts/share/Include/libs`、`*.pdb` → 删除；
+3. **不再安装 Pillow**（14MB）：它只用于托盘图标，启动器已做「无 Pillow 自动跳过托盘」降级，
+   Web 功能完全不受影响；
+4. Django 语言包只保留 `en` / `zh_Hans`（界面只有中英文）。
+
+| 指标 | 最初 | 第一次裁剪 | 本次（仅 Win x64） |
+|---|---|---|---|
+| 解压后体积 | 136.3 MB | 100.8 MB | **81.7 MB** |
+| 文件数量 | 13046 | 5713 | **5249** |
+| 整包 zip | 54.4 MB | 40.5 MB | **32.0 MB** |
+
+另外附带 `更新程序.ps1`：只同步 `app` 与 `web`（约 330 个文件），保留 `data` 与 `runtime`，
+日常升级从「覆盖 5200 个文件」变成「覆盖 330 个文件」，秒级完成。
+
+> 说明：`runtime` 里 8 个顶层 DLL + 60 个 `.pyd` 是**无法再合并**的下限——
+> Python 解释器本身（`python312.dll` + `vcruntime140*.dll` + 标准库 zip）只要 2~3 个 DLL，
+> 但 cryptography/gevent/pydantic-core/bcrypt/cffi/nacl 这些 C 扩展各自是独立二进制。
+> 剩下的文件主要是纯 Python 源码（约 2600 个 `.py`）与数据文件（tzdata 627、Django 语言包）。
+
+> 建议：把安装目录加入 Windows Defender 的排除项、并关闭资源管理器的「始终显示图标」/索引，
+> 否则 5000 多个文件的目录在资源管理器里依然会卡。
+
+### 兼容性验证矩阵（真实主机）
+
+| 发行版 | 包管理器 | 验证项 | 结果 |
+|---|---|---|---|
+| CentOS 7.9 | yum | pkg 安装 / 幂等 / 卸载 | ✅ changed / unchanged / changed |
+| CentOS 7.9 | yum | 批量状态任务（2 台并发） | ✅ status=1，changed=2，failed=0 |
+| CentOS 7.9 | — | 文件分发（主机→主机、本地→主机，SFTP） | ✅ 内容校验一致 |
+| Rocky 9.7 | dnf | pkg / service / file / 模板 / 新增模块 | ✅ |
+| Rocky 9.7 | dnf | **应用发布（git → 构建 → 分发 → 软链切换）** | ✅ status=3，`current -> repo/<version>`，README 内容正确 |
+| Rocky 9.7 / CentOS 7 | — | 文件分发性能（60 个文件） | ✅ 0.29s（4.8ms/个） |
+| Ubuntu 24.04 | apt | pkg（含 cache_time 幂等）/ 新增模块 | ✅ |
+
+> 注意：rpm 制品源的仓库必须与目标机发行版匹配。用 Rocky 9 的仓库给 CentOS 7 装包时，
+> yum 会因 el9 包的 rich dependency（如 `(foo if bar)`）报 `Invalid version flag: if`，
+> 这是仓库内容不兼容，不是节点缺陷。
 
 ## 9. 外部自愈联动（UptimeKuma 等）
 

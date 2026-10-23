@@ -76,6 +76,13 @@
       display: flex;
       align-items: center;
       justify-content: flex-end;
+      /* 操作按钮较多时自动换行，避免挤压/重叠 */
+      flex-wrap: wrap;
+      gap: 8px;
+
+      :global(.ant-btn) {
+        margin-left: 0 !important;
+      }
 
       .icons {
         :global(.anticon) {

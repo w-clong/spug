@@ -75,10 +75,50 @@ if (-not $SkipDeps) {
 }
 
 Step '复制后端与前端产物'
-robocopy (Join-Path $root 'spug_api') $app /E /XD venv __pycache__ data /XF selftest_*.py e2e_linux.py /NFL /NDL /NJH /NJS /NP | Out-Null
+robocopy (Join-Path $root 'spug_api') $app /E /XD venv __pycache__ data /XF selftest_*.py e2e_linux.py debug_*.py /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw '复制 app 失败' }
 robocopy (Join-Path $root 'spug_web\build') $web /E /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw '复制 web 失败' }
+
+Step '精简 runtime（减少小文件数量，提升复制/解压/更新速度）'
+$site = Join-Path $runtime 'Lib\site-packages'
+# 1) 未使用的 Django contrib（INSTALLED_APPS 里没有任何 django.contrib）
+foreach ($name in 'gis', 'admindocs', 'flatpages', 'redirects', 'sites', 'humanize',
+                  'postgres', 'admin', 'sitemaps', 'syndication') {
+    $p = Join-Path $site "django\contrib\$name"
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+}
+# 2) 测试目录
+#    注意：不要删除 *.dist-info —— pyinfra 的 ssh 连接器等插件靠 entry_points 注册，
+#    删掉包元数据会导致运行期 KeyError: 'ssh'
+foreach ($name in 'tests', 'test') {
+    Get-ChildItem $site -Directory -Recurse -Filter $name -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\django\\' } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
+# 3) 与运行无关的目录
+foreach ($d in 'Scripts', 'share', 'Include', 'libs') {
+    $p = Join-Path $runtime $d
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+}
+Get-ChildItem $runtime -Recurse -File -Include '*.pdb', '*.lib', '*.h' -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
+# 4) 便携包不装 Pillow：只用于托盘图标，启动器已做「无 Pillow 自动跳过托盘」降级，省约 14MB
+foreach ($pkg in 'PIL', 'pillow') {
+    $p = Join-Path $site $pkg
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+}
+Get-ChildItem $site -Directory -Filter 'pillow-*.dist-info' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+# 5) Django 只保留 en / zh_Hans 语言包（界面只有中英文），其余翻译文件删掉
+$localeDir = Join-Path $site 'django\conf\locale'
+if (Test-Path $localeDir) {
+    Get-ChildItem $localeDir -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notin @('en', 'zh_Hans', '__pycache__') } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Step '写入 spug.ini'
 @"
@@ -97,9 +137,16 @@ $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { throw '未找到 csc.exe（.NET Framework 4.x），无法编译启动器' }
 $icon = Join-Path $root 'spug_web\public\favicon.ico'
 $exe = Join-Path $dist 'Spug.exe'
-& $csc /nologo /target:winexe /platform:x64 "/win32icon:$icon" "/out:$exe" (Join-Path $root 'packaging\launcher.cs')
+# 托盘图标改用 Win32 NotifyIcon 实现，需要引用 WinForms / Drawing
+& $csc /nologo /target:winexe /platform:x64 "/win32icon:$icon" "/out:$exe" `
+    /r:System.Windows.Forms.dll /r:System.Drawing.dll (Join-Path $root 'packaging\launcher.cs')
 if ($LASTEXITCODE -ne 0) { throw '编译 Spug.exe 失败' }
 
+Step '附带快速更新脚本'
+Copy-Item (Join-Path $root 'packaging\update.ps1') (Join-Path $dist '更新程序.ps1') -Force
+
 $size = (Get-ChildItem $dist -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
-Write-Host ('构建完成 -> {0}（{1:N1} MB）' -f $dist, $size)
+$count = (Get-ChildItem $dist -Recurse -File | Measure-Object).Count
+Write-Host ('构建完成 -> {0}（{1:N1} MB，{2} 个文件）' -f $dist, $size, $count)
 Write-Host '分发：整个 dist\Spug 目录拷贝到目标机，双击 Spug.exe（首次自动建库 admin/admin）'
+Write-Host '更新：只替换 app/web 时用 更新程序.ps1（保留 data 与 runtime，秒级完成）'

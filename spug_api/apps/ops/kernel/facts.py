@@ -21,6 +21,20 @@ FACT_DEFS = {
     'hostname': server.Hostname,
     'memory': hardware.Memory,
     'cpu': hardware.CpuInfo,
+    # 包管理器可用性：CentOS 7 只有 yum、新版才有 dnf，
+    # 不能只按发行版判断，这里直接探测命令是否存在
+    'which_dnf': server.Which,
+    'which_yum': server.Which,
+    'which_apt': server.Which,
+    'which_apk': server.Which,
+}
+
+# Which 类需要指定命令名
+FACT_ARGS = {
+    'which_dnf': ['dnf'],
+    'which_yum': ['yum'],
+    'which_apt': ['apt'],
+    'which_apk': ['apk'],
 }
 
 # 发行版 id/name -> 包管理器族
@@ -50,7 +64,12 @@ def collect(host):
     result = {}
     for key, fact_cls in FACT_DEFS.items():
         try:
-            value = host.get_fact(fact_cls)
+            args = FACT_ARGS.get(key)
+            if args:
+                # Which 接受命令名参数；多个命令时返回第一个可用的路径
+                value = host.get_fact(fact_cls, *args)
+            else:
+                value = host.get_fact(fact_cls)
         except Exception:
             # 单条 fact 失败（例如精简系统缺少命令）不应影响其他 fact
             continue

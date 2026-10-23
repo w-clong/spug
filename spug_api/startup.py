@@ -196,6 +196,12 @@ def _build_server(host, port, signal_handlers):
         application=application,
         endpoints=build_endpoint_description_strings(host=host, port=port),
         signal_handlers=signal_handlers,
+        # 单进程里同时跑 HTTP/WS 和状态模块执行线程，批量任务时事件循环可能短暂
+        # 繁忙；放宽握手/心跳超时，避免控制台 WebSocket 被误判断线
+        ping_interval=30,
+        ping_timeout=120,
+        websocket_connect_timeout=60,
+        websocket_handshake_timeout=30,
     )
 
 
@@ -250,7 +256,11 @@ def _alert(message):
 
 
 def _tray_image():
-    from PIL import Image
+    """托盘图标；没有 Pillow 时返回 None（精简包不装 Pillow，省 ~14MB）。"""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return None
     ico = Path(settings.FRONTEND_DIR) / 'favicon.ico'
     if ico.is_file():
         try:
@@ -258,7 +268,6 @@ def _tray_image():
         except Exception:
             pass
     img = Image.new('RGBA', (64, 64), (22, 119, 255, 255))
-    from PIL import ImageDraw
     ImageDraw.Draw(img).text((24, 22), 'S', fill=(255, 255, 255, 255))
     return img
 
@@ -313,7 +322,12 @@ def _start_tray(url):
         pystray.MenuItem('打开 Spug 界面', on_open, default=True),
         pystray.MenuItem('退出', on_quit),
     )
-    icon = pystray.Icon('spug', _tray_image(), 'Spug 运维平台', menu)
+    image = _tray_image()
+    if image is None:
+        # 精简包不带 Pillow（省 14MB），没有它 pystray 无法设置图标，直接跳过托盘
+        _log('未安装 Pillow，跳过托盘图标（不影响 Web 界面）')
+        return None
+    icon = pystray.Icon('spug', image, 'Spug 运维平台', menu)
     try:
         icon.run_detached()
     except Exception as e:

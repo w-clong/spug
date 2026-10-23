@@ -14,6 +14,10 @@ import json
 import uuid
 import time
 import os
+import io
+import shutil
+import tarfile
+import fnmatch
 
 REPOS_DIR = settings.REPOS_DIR
 BUILD_DIR = settings.BUILD_DIR
@@ -76,7 +80,11 @@ def dispatch(rep: Repository, helper=None, language='zh'):
     finally:
         # cleanup must never mask the build result, local_raw raises on failure
         try:
-            helper.local_raw(f'cd {REPOS_DIR} && rm -rf {rep.spug_version}')
+            if os.name == 'nt':
+                # Windows 无 bash，直接用 shutil 清理
+                shutil.rmtree(os.path.join(REPOS_DIR, rep.spug_version), ignore_errors=True)
+            else:
+                helper.local_raw(f'cd {REPOS_DIR} && rm -rf {rep.spug_version}')
         except Exception as e:
             print(f'clean build workspace of {rep.spug_version} error: {e}')
         close_old_connections()
@@ -91,6 +99,9 @@ def dispatch(rep: Repository, helper=None, language='zh'):
 
 
 def _build(rep: Repository, helper, env):
+    # Windows 单机部署通常没有 bash/tar，走纯 Python 构建（git 仍由 GitPython 调用）
+    if os.name == 'nt' and not shutil.which('bash'):
+        return _build_python(rep, helper, env)
     flag = time.time()
     extend = rep.deploy.extend_obj
     git_dir = os.path.join(REPOS_DIR, str(rep.deploy_id))
@@ -135,3 +146,65 @@ def _build(rep: Repository, helper, env):
         helper.set_cross_env(rep.spug_version, et.get_envs())
         human_time = human_seconds_time(time.time() - flag)
         helper.send_success('local', f'\r\n** 构建成功，耗时：{human_time} **\r\n', status='success')
+
+def _match_filter(rel, patterns):
+    """include/exclude 匹配：支持目录前缀与通配符。"""
+    for pattern in patterns:
+        p = (pattern or '').strip().lstrip('/')
+        if not p:
+            continue
+        if rel == p or rel.startswith(p.rstrip('/') + '/'):
+            return True
+        if fnmatch.fnmatch(rel, p):
+            return True
+    return False
+
+
+def _build_python(rep: Repository, helper, env):
+    """纯 Python 构建（Windows 无 bash 时使用）：GitPython 取归档 + tarfile 打包。"""
+    from git import Repo
+
+    flag = time.time()
+    extend = rep.deploy.extend_obj
+    git_dir = os.path.join(REPOS_DIR, str(rep.deploy_id))
+    tar_file = os.path.join(BUILD_DIR, f'{rep.spug_version}.tar.gz')
+    env.update(SPUG_DST_DIR=render_str(extend.dst_dir, env))
+    os.makedirs(BUILD_DIR, exist_ok=True)
+
+    helper.send_info('local', '构建准备...        ', status='doing')
+    fetch_repo(rep.deploy_id, extend.git_repo)
+    helper.send_success('local', '完成√\r\n')
+
+    if extend.hook_pre_server or extend.hook_post_server:
+        helper.send_warn('local', '当前环境没有 bash，已跳过检出前后 hook\r\n')
+
+    helper.send_info('local', '执行检出...        ')
+    repo = Repo(git_dir)
+    tree_ish = env.get('SPUG_GIT_COMMIT_ID') or env.get('SPUG_GIT_TAG')
+    prefix = f'{rep.spug_version}/'
+    raw = repo.git.archive(tree_ish, prefix=prefix, stdout_as_string=False)
+    helper.send_success('local', '完成√\r\n')
+
+    helper.send_info('local', '执行打包...        ')
+    filter_rule = json.loads(extend.filter_rule)
+    files = helper.parse_filter_rule(filter_rule['data'], env=env)
+    keep = filter_rule.get('type') == 'include'
+    with tarfile.open(fileobj=io.BytesIO(raw), mode='r:') as src:
+        with tarfile.open(tar_file, 'w:gz') as dst:
+            for member in src.getmembers():
+                name = member.name
+                rel = name[len(prefix):] if name.startswith(prefix) else name
+                if not rel:
+                    continue
+                matched = _match_filter(rel, files)
+                if keep and not matched:
+                    continue
+                if not keep and matched:
+                    continue
+                data = src.extractfile(member) if member.isfile() else None
+                dst.addfile(member, data)
+    helper.send_success('local', '完成√\r\n')
+
+    helper.set_cross_env(rep.spug_version, {})
+    human_time = human_seconds_time(time.time() - flag)
+    helper.send_success('local', f'\r\n** 构建成功，耗时：{human_time} **\r\n', status='success')

@@ -40,8 +40,16 @@ class StateJob:
             message['data'] = data
         if status is not None:
             message['status'] = status
+        raw = json.dumps(message)
         try:
-            self.rds.publish(self.token, json.dumps(message))
+            self.rds.publish(self.token, raw)
+        except Exception:
+            pass
+        try:
+            # 额外落一份列表：WebSocket 断线重连或晚加入时可回放历史日志
+            backlog_key = f'spug:state:log:{self.token}'
+            self.rds.rpush(backlog_key, raw)
+            self.rds.expire(backlog_key, 3600)
         except Exception:
             pass
 
