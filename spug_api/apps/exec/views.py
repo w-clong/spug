@@ -150,11 +150,12 @@ class TaskView(View):
                     port=host.port,
                     username=host.username,
                     command=task.command,
-                    pkey=host.private_key,
                     params=json.loads(task.params),
                     term=term,
                     language=get_request_language(request),
                 )
+                # 密码认证的主机传 password，密钥认证传 pkey（二者不会同时存在）
+                data.update(host.ssh_credentials())
                 rds.rpush(settings.EXEC_WORKER_KEY, json.dumps(data))
         return json_response(error=error)
 

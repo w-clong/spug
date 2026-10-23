@@ -67,10 +67,11 @@ def trigger(request, template_id):
             port=host.port,
             username=host.username,
             command=template.body,
-            pkey=host.private_key,
             params=params,
             record=True,
         )
+        # 密码认证的主机传 password，密钥认证传 pkey（二者不会同时存在）
+        data.update(host.ssh_credentials())
         rds.rpush(settings.EXEC_WORKER_KEY, json.dumps(data))
     return api_response({'token': token}, status=202)
 

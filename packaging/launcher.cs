@@ -42,6 +42,8 @@ internal static class Program
         psi.EnvironmentVariables["SPUG_APP_ROOT"] = root;
         psi.EnvironmentVariables["SPUG_DATA_DIR"] = Path.Combine(root, "data");
         psi.EnvironmentVariables["SPUG_FRONTEND_DIR"] = Path.Combine(root, "web");
+        // 托盘由本启动器提供，通知 Python 端不要再用 pystray 创建一个（避免两个图标）
+        psi.EnvironmentVariables["SPUG_LAUNCHER"] = "1";
 
         Process child;
         try
@@ -135,10 +137,22 @@ internal static class Program
 
         private static Icon LoadIcon()
         {
+            // 优先用 exe 自身嵌入的图标（构建时 /win32icon 注入 favicon.ico）。
+            // 不用 Icon.ExtractAssociatedIcon：它只能取到 32x32，且部分系统上会退化成默认图标。
             try
             {
-                var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-                if (icon != null) return icon;
+                var ico = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                if (ico != null) return ico;
+            }
+            catch
+            {
+                // ignore
+            }
+            // 退一步：从 exe 的资源里按大尺寸加载，托盘/任务栏都更清晰
+            try
+            {
+                var large = new Icon(Application.ExecutablePath, new Size(32, 32));
+                if (large != null) return large;
             }
             catch
             {

@@ -211,8 +211,9 @@ class MemRedis:
             entry = _get_entry(k)
             if not entry or entry['type'] != 'str':
                 _set_entry(k, {'type': 'str', 'data': data})
-            else:
-                entry['data'] += data
+                # 新建 entry 后局部变量 entry 仍是 None/旧值，必须直接用 data 计算长度
+                return len(data)
+            entry['data'] += data
             return len(entry['data'])
 
     def incr(self, name, amount=1):
@@ -289,6 +290,10 @@ class MemRedis:
             return d[index]
 
     def _blocking_pop(self, keys, timeout, from_right):
+        # redis-py 既接受 key 列表也接受单个 key 字符串。直接对字符串迭代会把它
+        # 拆成一个个字符，导致 brpop('spug:monitor') 永远等不到消息（监控告警因此不触发）。
+        if isinstance(keys, (str, bytes)):
+            keys = [keys]
         keys = [_enc_key(k) for k in keys]
         deadline = None if timeout is None else _now() + timeout
         with _cond:

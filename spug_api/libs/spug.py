@@ -64,7 +64,7 @@ class Notification:
 
     def monitor_by_wx(self, users):
         if not self.spug_key:
-            Notify.make_monitor_notify('发送报警信息失败', '未配置报警服务调用凭据，请在系统管理/系统设置/基本设置/调用凭据中配置。')
+            Notify.make_monitor_notify('发送报警信息失败', '微信告警依赖 Spug 云推送服务，当前离线部署不可用。')
             return
         data = {
             'token': self.spug_key,
@@ -89,8 +89,13 @@ class Notification:
         if mail_service.get('server'):
             event_map = {'1': '监控告警通知', '2': '告警恢复通知'}
             subject = f'{event_map[self.event]}-{self.title}'
-            mail = Mail(**mail_service)
-            mail.send_text_mail(users, subject, '\r\n'.join(body) + '\r\n\r\n自动发送，请勿回复。')
+            try:
+                mail = Mail(**mail_service)
+                mail.send_text_mail(users, subject, '\r\n'.join(body) + '\r\n\r\n自动发送，请勿回复。')
+            except Exception as e:
+                # SMTP 连不上/认证失败时必须留下可见结果，否则告警面板显示已触发、用户却收不到任何邮件
+                # 也不知道原因（异常抛出后本线程的后续逻辑会直接中断）。
+                Notify.make_monitor_notify('发送报警邮件失败', f'收件人：{", ".join(users)}\n错误：{e}')
         elif self.spug_key:
             data = {
                 'token': self.spug_key,
@@ -101,7 +106,7 @@ class Notification:
             }
             self.handle_request(f'{spug_server}/apis/notify/mail/', data, 'spug')
         else:
-            Notify.make_monitor_notify('发送报警信息失败', '未配置报警服务调用凭据，请在系统管理/系统设置/报警服务设置中配置。')
+            Notify.make_monitor_notify('发送报警信息失败', '未配置邮件服务，请在 系统管理/系统设置/报警服务设置 中配置 SMTP。')
 
     def monitor_by_dd(self, users):
         texts = [

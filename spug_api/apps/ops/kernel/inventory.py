@@ -14,7 +14,27 @@
   state.private_keys。这里传入一个 spug:// 伪路径，并预先填充
   state.private_keys，让连接器直接命中缓存，从而避开落盘。
 """
+from pathlib import Path
+
 from pyinfra.api import Inventory
+
+
+def _empty_known_hosts():
+    """返回一个空的 known_hosts 文件路径（进程内只需创建一次）。"""
+    try:
+        from django.conf import settings
+        base = Path(settings.DATA_DIR) / 'tmp'
+    except Exception:
+        import tempfile
+        base = Path(tempfile.gettempdir()) / 'spug'
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / 'empty_known_hosts'
+    if not path.exists():
+        path.write_text('', encoding='utf-8')
+    return str(path)
+
+
+_EMPTY_KNOWN_HOSTS = _empty_known_hosts()
 
 # 与 Spug 原生 SSH 行为保持一致：不校验 known_hosts
 SSH_DATA = {
@@ -23,6 +43,10 @@ SSH_DATA = {
     'ssh_look_for_keys': False,
     # 与 Spug 原生 AutoAddPolicy 对齐；pyinfra 该字段是枚举字符串
     'ssh_strict_host_key_checking': 'no',
+    # pyinfra 的 paramiko 连接器在未指定 known_hosts 文件时会读取用户的
+    # ~/.ssh/known_hosts，主机重装后密钥变化会直接导致连接失败（BadHostKeyException）。
+    # 指向一个空的临时文件，等价于 Spug 原生「不校验」的行为。
+    'ssh_known_hosts_file': _EMPTY_KNOWN_HOSTS,
 }
 
 
@@ -72,8 +96,10 @@ def inject_private_keys(state, hosts):
         if not pkey:
             if default_key is None:
                 from apps.setting.utils import AppSetting
-                default_key = AppSetting.get('private_key')
+                # get_default 而非 get：从未生成过全局密钥时应给出可读错误，
+                # 而不是在这里抛 KeyError
+                default_key = AppSetting.get_default('private_key') or ''
             pkey = default_key
         if not pkey:
-            raise ValueError(f'主机 {host.name} 未配置可用的 SSH 私钥或密码')
+            raise ValueError(f'主机 {host.name} 未配置可用的 SSH 私钥或密码，请先在主机管理中验证该主机')
         state.private_keys[key_ref(host)] = SSH.load_pkey(pkey)

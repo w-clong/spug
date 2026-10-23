@@ -43,8 +43,21 @@ try {
     robocopy $newWeb (Join-Path $Target 'web') /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw '更新 web 失败' }
 
+    # 启动器与配置：spug.ini 仅在目标不存在时写入，避免覆盖用户改过的端口
+    $exe = Join-Path $temp 'Spug.exe'
+    if (Test-Path $exe) {
+        Write-Host "[update] 更新 Spug.exe ..."
+        Copy-Item $exe (Join-Path $Target 'Spug.exe') -Force
+    }
+    $ini = Join-Path $temp 'spug.ini'
+    if ((Test-Path $ini) -and -not (Test-Path (Join-Path $Target 'spug.ini'))) {
+        Copy-Item $ini (Join-Path $Target 'spug.ini') -Force
+    }
+
     $doc = Join-Path $temp '使用说明.md'
     if (Test-Path $doc) { Copy-Item $doc (Join-Path $Target '使用说明.md') -Force }
+    $upd = Join-Path $temp '更新程序.ps1'
+    if (Test-Path $upd) { Copy-Item $upd (Join-Path $Target '更新程序.ps1') -Force }
 
     Write-Host "[update] 完成。data 与 runtime 未改动，直接启动 Spug.exe 即可。"
 }

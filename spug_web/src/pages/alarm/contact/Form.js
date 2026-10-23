@@ -87,22 +87,11 @@ export default observer(function () {
         <Form.Item required name="name" label={t('姓名')}>
           <Input placeholder={t('请输入联系人姓名')}/>
         </Form.Item>
-        <Form.Item name="phone" label={t('手机号')}>
-          <Input placeholder={t('请输入手机号')}/>
-        </Form.Item>
         <Form.Item label={t('邮箱')}>
           <Form.Item noStyle name="email">
             <Input placeholder={t('请输入邮箱地址')}/>
           </Form.Item>
           <Test mode="4" name="email"/>
-        </Form.Item>
-        <Form.Item label={t('微信Token')} extra={
-          <a target="_blank" rel="noopener noreferrer"
-             href={docsUrl('alarm-contact/')}>{t('如何获取微信 Token ？')}</a>}>
-          <Form.Item noStyle name="wx_token">
-            <Input placeholder={t('请输入微信token')}/>
-          </Form.Item>
-          <Test mode="1" name="wx_token"/>
         </Form.Item>
         <Form.Item label={t('钉钉')} extra={<span>
             {t('钉钉收不到通知？请参考')}

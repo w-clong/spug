@@ -110,13 +110,22 @@
 
 .sider {
   height: 100%;
+  /* 折叠宽度由 antd 的 inline style 控制，这里只兜底展开态 */
   width: 208px;
-  min-height: 100vh;
+  /* 不用 min-height: 100vh：与外层 Layout 的 100vh 叠加会让菜单展开时
+     把容器顶出屏幕（展开项变高 + 固定高度计算），改为自适应可用高度 */
+  height: 100vh;
+  position: sticky;
+  top: 0;
   box-shadow: 2px 0 8px 0 rgba(29, 35, 41, 0.05);
+  /* 侧边栏自身不滚动，交给内部菜单，避免出现双层滚动条 */
   overflow: hidden;
 
   .menus {
-    overflow: auto;
+    height: auto;
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .menus::-webkit-scrollbar {
@@ -127,6 +136,7 @@
   .logo {
     height: 64px;
     line-height: 64px;
+    flex-shrink: 0;
     overflow: hidden;
     text-align: center;
   }

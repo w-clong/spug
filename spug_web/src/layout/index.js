@@ -40,7 +40,7 @@ export default function () {
   }, [])
 
   return (
-    <Layout>
+    <Layout style={{height: '100vh', overflow: 'hidden'}}>
       <Sider collapsed={collapsed}/>
       <Layout style={{height: '100vh', overflow: 'hidden'}}>
         <Header collapsed={collapsed} toggle={() => setCollapsed(!collapsed)}/>

@@ -14,6 +14,13 @@ import store from './store';
 import icons from './icons';
 import moment from 'moment';
 
+// Facts 里的内存字段：新采集写入 memory_total_mb，旧缓存可能只有 pyinfra 原生的 memory（MB）
+function factsMemoryMb(facts) {
+  if (!facts) return 0
+  if (facts.memory_total_mb) return facts.memory_total_mb
+  return typeof facts.memory === 'number' ? facts.memory : 0
+}
+
 function ComTable() {
   const [loading, setLoading] = useState(false)
   const [facts, setFacts] = useState(null)
@@ -26,7 +33,12 @@ function ComTable() {
   }, [])
 
   function loadFacts() {
-    http.get('/api/ops/facts/', { params: { with_meta: 1 } }).then(res => setFactsMeta(res || {}))
+    return http.get('/api/ops/facts/', { params: { with_meta: 1 } })
+      .then(res => {
+        setFactsMeta(res || {})
+        return res || {}
+      })
+      .catch(() => setFactsMeta({}))
   }
 
   function handleRefreshFacts() {
@@ -36,7 +48,16 @@ function ComTable() {
     http.post('/api/ops/facts/', { host_ids: ids })
       .then(() => {
         message.success(t('已开始采集系统信息，请稍后查看'))
-        setTimeout(loadFacts, 4000)
+        // 采集在后端线程里执行，主机多时耗时较长。固定等 4 秒可能拿到的还是旧数据，
+        // 这里轮询到所有主机都有 Facts 或超时（约 30 秒）为止。
+        let tries = 0
+        const poll = () => {
+          loadFacts().then(meta => {
+            const done = ids.every(id => meta[id] && meta[id].facts)
+            if (!done && ++tries < 15) setTimeout(poll, 2000)
+          })
+        }
+        setTimeout(poll, 1500)
       })
       .finally(() => setLoading(false))
   }
@@ -214,9 +235,12 @@ function ComTable() {
           type="primary"
           icon={<AppstoreOutlined/>}
           onClick={() => setCardVisible(true)}>{t('卡片')}</AuthButton>,
-        <Radio.Group value={store.f_status} onChange={e => store.f_status = e.target.value}>
+        <Radio.Group
+          style={{display: 'flex', flexShrink: 0}}
+          value={store.f_status === '' || store.f_status === null ? '' : String(store.f_status)}
+          onChange={e => store.f_status = e.target.value === '' ? '' : (e.target.value === 'true')}>
           <Radio.Button value="">{t('全部')}</Radio.Button>
-          <Radio.Button value={false}>{t('未验证')}</Radio.Button>
+          <Radio.Button value="false">{t('未验证')}</Radio.Button>
         </Radio.Group>
       ]}
       pagination={{
@@ -253,7 +277,7 @@ function ComTable() {
           <div>
             <div>{f.os_family} {f.os_version}</div>
             <div style={{color: '#999', fontSize: 12}}>
-              {f.memory_total_mb ? `${(f.memory_total_mb / 1024).toFixed(1)} GB` : ''}
+              {factsMemoryMb(f) ? `${(factsMemoryMb(f) / 1024).toFixed(1)} GB` : ''}
               {meta.updated_at ? ` · ${meta.updated_at.slice(5, 16)}` : ''}
             </div>
           </div>
@@ -315,7 +339,7 @@ function ComTable() {
                 {f ? `${f.os_family || ''} ${f.os_version || ''}` : <span style={{color: '#999'}}>{t('未采集 Facts')}</span>}
               </div>
               <div style={{color: '#999', fontSize: 12, minHeight: 18}}>
-                {f && f.memory_total_mb ? `${(f.memory_total_mb / 1024).toFixed(1)} GB · ` : ''}
+                {f && factsMemoryMb(f) ? `${(factsMemoryMb(f) / 1024).toFixed(1)} GB · ` : ''}
                 {meta && meta.updated_at ? t('采集于 {}', meta.updated_at.slice(5, 16)) : ''}
               </div>
               <Space style={{marginTop: 12}}>

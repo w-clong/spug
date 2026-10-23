@@ -307,6 +307,8 @@ def _do_host_verify(form):
             raise Exception('密码连接认证失败，请检查密码是否正确')
         except socket.timeout:
             raise Exception('连接主机超时，请检查网络')
+        except Exception as e:
+            raise Exception(f'写入 SSH 公钥失败：{e}')
 
     try:
         with SSH(form.hostname, form.port, form.username, private_key) as ssh:
@@ -315,7 +317,13 @@ def _do_host_verify(form):
         raise Exception('该主机不支持密钥认证，请参考官方文档，错误代码：E01')
     except AuthenticationException:
         if password:
-            raise Exception('密钥认证失败，请参考官方文档，错误代码：E02')
+            # 已用密码写入公钥但仍认证失败，通常是目标机 sshd 禁用了公钥认证
+            # （PubkeyAuthentication no / AuthorizedKeysFile 非默认路径）。
+            raise Exception(
+                '密码可以连接，但公钥认证仍被拒绝。请检查目标机 /etc/ssh/sshd_config 中 '
+                'PubkeyAuthentication 是否为 yes、AuthorizedKeysFile 是否为默认的 '
+                '.ssh/authorized_keys，以及 ~/.ssh 目录权限（700）与文件权限（600）。'
+                '错误代码：E02')
         return False
     except socket.timeout:
         raise Exception('连接主机超时，请检查网络')

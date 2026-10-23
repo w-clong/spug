@@ -54,10 +54,8 @@ class ComTable extends React.Component {
           pageSizeOptions: ['10', '20', '50', '100']
         }}>
         <Table.Column title={t('姓名')} dataIndex="name"/>
-        <Table.Column title={t('手机号')} dataIndex="phone"/>
         <Table.Column ellipsis title={t('邮箱')} dataIndex="email"/>
         <Table.Column ellipsis hide title={t('钉钉')} dataIndex="ding"/>
-        <Table.Column ellipsis hide title={t('微信')} dataIndex="wx_token"/>
         <Table.Column ellipsis hide title={t('企业微信')} dataIndex="qy_wx"/>
         <Table.Column ellipsis hide title={t('飞书')} dataIndex="feishu"/>
         {hasPermission('alarm.contact.edit|alarm.contact.del') && (

@@ -12,9 +12,8 @@ requests >= 2.31.0, < 3.0.0
 GitPython==3.1.62
 openpyxl==3.1.2
 user_agents==2.2.0
-# 桌面模式（托盘 + 内置图标）：无控制台运行、托盘菜单、自动打开浏览器
-# 注意：托盘图标依赖 Pillow；为减小体积，便携包不再安装 Pillow，
-#       没有 Pillow 时启动器会自动跳过托盘，Web 界面功能不受影响。
-pystray==0.19.5
+# 桌面托盘：由 Spug.exe 启动器用 Win32 NotifyIcon 原生实现，
+# 便携包不再需要 pystray / Pillow（省约 14MB）。仅当直接用
+# runtime\pythonw.exe 跑 startup.py（无启动器）时才会尝试 pystray，缺失会自动跳过。
 # B2 方案内核：同进程 import pyinfra 原生 API（禁止 CLI / 子进程 / 独立环境）
 pyinfra==3.10.0

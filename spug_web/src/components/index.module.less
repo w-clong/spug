@@ -62,14 +62,19 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    /* 标题区和按钮区在窄屏时各自换行，避免按钮溢出、标题被挤成一个空框 */
+    flex-wrap: wrap;
+    gap: 12px 16px;
     margin-bottom: 20px;
 
     .title {
-      flex: 1;
+      /* 原为 flex:1：按钮一多就会被挤到几十像素，搜索框显示成一个空方框 */
+      flex: 0 1 auto;
+      min-width: 220px;
       font-weight: 500;
       font-size: 16px;
       opacity: 0.8;
-      margin-right: 24px;
+      margin-right: 0;
     }
 
     .option {
@@ -77,6 +82,8 @@
       align-items: center;
       justify-content: flex-end;
       /* 操作按钮较多时自动换行，避免挤压/重叠 */
+      flex: 1 1 auto;
+      min-width: 0;
       flex-wrap: wrap;
       gap: 8px;
 

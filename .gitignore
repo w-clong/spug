@@ -9,6 +9,8 @@ build
 dist
 data
 .tmp-data
+.tmp-diag
+.tmp-sim
 __pycache__
 *.pyc
 

@@ -122,23 +122,29 @@ function Header(props) {
   )
 }
 
+function getColumns(props) {
+  if (props.children) {
+    return Array.isArray(props.children)
+      ? props.children.filter(x => x.props).map(x => x.props)
+      : [props.children.props]
+  }
+  return props.columns || []
+}
+
 function TableCard(props) {
   const rootRef = useRef();
   const batchActions = props.batchActions || [];
   const selected = props.selected || [];
   const [fields, setFields] = useState([]);
   const [defaultFields, setDefaultFields] = useState([]);
-  const [columns, setColumns] = useState([]);
+  // 列定义每次渲染都从 children 重新取。原实现只在挂载时取一次存进 state，
+  // 列 render 里的闭包会永远引用挂载时的 state（例如主机列表的 Facts 数据），
+  // 之后 setState 表格也不会刷新，只能整页重载才生效。
+  const columns = getColumns(props);
 
   useEffect(() => {
-    let [_columns, _fields] = [props.columns, []];
-    if (props.children) {
-      if (Array.isArray(props.children)) {
-        _columns = props.children.filter(x => x.props).map(x => x.props)
-      } else {
-        _columns = [props.children.props]
-      }
-    }
+    let _columns = getColumns(props);
+    let _fields = [];
     let hideFields = _columns.filter(x => x.hide).map(x => x.title)
     if (props.tKey) {
       if (TableFields[props.tKey]) {
@@ -152,7 +158,6 @@ function TableCard(props) {
       if (!hideFields.includes(item.title)) _fields.push(index)
     }
     setFields(_fields);
-    setColumns(_columns);
     setDefaultFields(_fields);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

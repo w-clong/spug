@@ -10,17 +10,34 @@ import threading
 import socket
 import json
 import time
+import logging
 
 
 def exec_worker_handler(job):
-    job = Job(**json.loads(job))
+    try:
+        job = Job(**json.loads(job))
+    except Exception as e:
+        # 工作线程里的异常不会有人捕获，前端只会一直停在“Waiting for scheduling”。
+        # 这里把失败原因回写到该任务的输出通道，并在日志中留下堆栈。
+        data = json.loads(job)
+        logging.exception('exec job init failed')
+        try:
+            rds = get_redis_connection()
+            rds.publish(data.get('token'), json.dumps({
+                'key': data.get('key'),
+                'data': f'\r\n\x1b[31m### Exception {e}\x1b[0m',
+                'status': 1,
+            }))
+        except Exception:
+            pass
+        return
     threading.Thread(target=job.run).start()
 
 
 class Job:
-    def __init__(self, token, key, name, hostname, port, username, pkey, command, interpreter, params=None,
-                 term=None, language='zh', record=False):
-        self.ssh = SSH(hostname, port, username, pkey, term=term)
+    def __init__(self, token, key, name, hostname, port, username, pkey=None, command=None, interpreter='sh',
+                 params=None, term=None, language='zh', record=False, password=None):
+        self.ssh = SSH(hostname, port, username, pkey, password=password, term=term)
         self.key = key
         self.command = self._handle_command(command, interpreter)
         self.token = token

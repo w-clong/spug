@@ -288,9 +288,17 @@ def _open_browser(url):
 
 
 def _start_tray(url):
-    """创建托盘图标（菜单：打开界面 / 退出），返回 icon 对象或 None。"""
+    """创建托盘图标（菜单：打开界面 / 退出），返回 icon 对象或 None。
+
+    便携版由 Spug.exe 启动器提供原生托盘（Win32 NotifyIcon），此时环境变量
+    SPUG_LAUNCHER=1 会由启动器注入，Python 端不再重复创建，避免两个托盘图标。
+    仅在直接用 python runtime\\pythonw.exe startup.py 运行时才走 pystray。
+    """
     if os.environ.get('SPUG_NO_TRAY') == '1':
         _log('SPUG_NO_TRAY=1，跳过托盘')
+        return None
+    if os.environ.get('SPUG_LAUNCHER') == '1':
+        _log('由 Spug.exe 启动器托管，托盘由启动器提供')
         return None
     try:
         import pystray

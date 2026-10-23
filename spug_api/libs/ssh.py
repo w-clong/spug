@@ -91,9 +91,24 @@ class SSH:
         return True
 
     def add_public_key(self, public_key):
-        command = f'mkdir -p -m 700 ~/.ssh && \
-        echo {public_key!r} >> ~/.ssh/authorized_keys && \
-        chmod 600 ~/.ssh/authorized_keys'
+        """把公钥写入远端 authorized_keys（幂等：已存在则不重复追加）。
+
+        直接 {key!r} 拼 shell 会因公钥含特殊字符或本地化 locale 出问题，
+        这里用 base64 编码传输再在远端解码，避免一切引号/编码歧义。
+        """
+        import base64
+        payload = base64.b64encode(public_key.encode()).decode()
+        command = (
+            'mkdir -p -m 700 ~/.ssh && '
+            'touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && '
+            f'echo {payload!r} | base64 -d > /tmp/.spug_key.$$ && '
+            'if grep -qxF "$(cat /tmp/.spug_key.$$)" ~/.ssh/authorized_keys; then '
+            '  echo exists; '
+            'else '
+            '  cat /tmp/.spug_key.$$ >> ~/.ssh/authorized_keys && echo added; '
+            'fi; '
+            'rm -f /tmp/.spug_key.$$'
+        )
         exit_code, out = self.exec_command_raw(command)
         if exit_code != 0:
             raise Exception(f'add public key error: {out}')

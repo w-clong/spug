@@ -11,7 +11,12 @@ import string
 import random
 import shutil
 import json
+import sys
 import os
+
+# Spug.exe 是无控制台进程，拉起 ping/git/bash 等控制台程序时 Windows 会闪一个黑窗
+# （监控 ping 每分钟执行一次时尤其明显）。所有本地子进程统一带 CREATE_NO_WINDOW。
+NO_WINDOW = {'creationflags': 0x08000000} if sys.platform == 'win32' else {}
 
 
 class SpugError(Exception):

@@ -314,7 +314,7 @@ class NodeExecutor:
                 return '未选择推送对象'
             token = AppSetting.get_default('spug_push_key')
             if not token:
-                return '未绑定推送助手账户，请在 系统管理/系统设置/推送服务设置 中完成绑定'
+                return '推送助手依赖 Spug 云服务，当前离线版本不再支持，请改用钉钉/飞书/企业微信推送'
             send_message(token, targets, 'monitor', {
                 'title': title,
                 'target': self.pipe_name or node.get('name') or '',

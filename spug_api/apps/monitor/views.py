@@ -8,7 +8,6 @@ from libs import json_response, JsonParser, Argument, human_datetime, auth
 from apps.monitor.models import Detection
 from apps.monitor.executors import dispatch
 from apps.account.utils import has_host_perm
-from apps.setting.utils import AppSetting
 from datetime import datetime
 import json
 
@@ -56,10 +55,8 @@ class DetectionView(View):
             error = _verify_host_targets(request.user, form.type, form.targets, form.extra)
             if error:
                 return json_response(error=error)
-            if set(form.notify_mode).intersection(['1', '2', '4']):
-                if not AppSetting.get_default('spug_key'):
-                    return json_response(error='报警方式 微信、短信、邮件需要配置调用凭据（系统设置/基本设置），请配置后再启用该报警方式。')
-
+            # 不再强制要求「调用凭据」：邮件可走本机 SMTP，钉钉/飞书/企业微信
+            # 走各自的 Webhook，只有微信公众号渠道在真正发送时才需要外部凭据。
             form.targets = json.dumps(form.targets)
             form.notify_grp = json.dumps(form.notify_grp)
             form.notify_mode = json.dumps(form.notify_mode)

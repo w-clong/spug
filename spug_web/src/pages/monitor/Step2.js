@@ -12,9 +12,8 @@ import groupStore from '../alarm/group/store';
 import store from './store';
 import lds from 'lodash';
 
+// 微信/短信依赖 Spug 官方推送服务，离线部署没有可用通道，不再提供
 const modeOptions = [
-  {label: t('微信'), 'value': '1'},
-  {label: t('短信'), 'value': '2', disabled: true},
   {label: t('钉钉'), 'value': '3'},
   {label: t('邮件'), 'value': '4'},
   {label: t('企业微信'), 'value': '5'},

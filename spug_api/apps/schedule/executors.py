@@ -6,7 +6,7 @@ from django.db import close_old_connections, transaction
 from apps.host.models import Host
 from apps.schedule.models import History, Task
 from apps.schedule.utils import send_fail_notify
-from libs.utils import wrap_python_command
+from libs.utils import wrap_python_command, NO_WINDOW
 import subprocess
 import socket
 import time
@@ -15,7 +15,8 @@ import json
 
 def local_executor(command):
     code, out, now = 1, None, time.time()
-    task = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    task = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            **NO_WINDOW)
     try:
         code = task.wait(3600)
         out = task.stdout.read() + task.stderr.read()

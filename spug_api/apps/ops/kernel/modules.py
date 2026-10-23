@@ -62,7 +62,8 @@ MODULE_SCHEMA = {
         'title': '服务',
         'desc': '服务启停 / 开机自启，自动选择 systemd 或 sysvinit',
         'fields': [
-            {'name': 'name', 'label': '服务名', 'type': 'text', 'required': True, 'placeholder': 'nginx'},
+            {'name': 'name', 'label': '服务名', 'type': 'text', 'required': True,
+             'placeholder': 'nginx, redis（逗号或换行分隔）'},
             {'name': 'running', 'label': '运行中', 'type': 'boolean', 'default': True},
             {'name': 'enabled', 'label': '开机自启', 'type': 'boolean', 'default': True},
             {'name': 'restarted', 'label': '重启服务', 'type': 'boolean', 'default': False},
@@ -465,6 +466,14 @@ def normalize(module, params):
         except ValueError:
             params = {}
     params = dict(params or {})
+    # 按模块 schema 补齐默认值。前端未触碰过的开关（例如「开机自启」默认开）
+    # 不会出现在 params 里，若直接 params.get('enabled') 会得到 None，
+    # pyinfra 会认为「不管理该状态」从而静默跳过。
+    schema = MODULE_SCHEMA.get(module) or {}
+    for field in schema.get('fields') or []:
+        name = field['name']
+        if name not in params and 'default' in field:
+            params[name] = field['default']
     for key in ('present', 'latest', 'recursive', 'running', 'enabled', 'restarted',
                 'system', 'persist', 'force', 'move', 'remote_src', 'update', 'pull',
                 'gpgcheck'):
@@ -523,6 +532,8 @@ def build_plan(hosts, module, params, facts_map):
     """返回 [(op_func, kwargs, [host, ...]), ...]，同一批主机按发行版拆组。"""
     params = normalize(module, params)
     if module == 'pkg':
+        if not params.get('packages'):
+            raise ValueError('请输入软件包名称')
         groups = {}
         for host in hosts:
             facts = facts_map.get(host.id, {}) or {}
@@ -554,21 +565,26 @@ def build_plan(hosts, module, params, facts_map):
         return plan
 
     if module == 'service':
+        # 支持一次管理多个服务：逗号/换行分隔，逐个服务生成 operation
+        names = _as_list(params.get('name'))
+        if not names:
+            raise ValueError('请输入服务名')
         # systemd 与 sysvinit 分开建 op，避免混用导致命令不可用
         sd_hosts = [h for h in hosts if _is_systemd(facts_map.get(h.id, {}))]
         sysv_hosts = [h for h in hosts if h not in sd_hosts]
         plan = []
-        base = {
-            'service': params.get('name'),
-            'running': params.get('running', True),
-            'enabled': params.get('enabled'),
-        }
-        if params.get('restarted'):
-            base['restarted'] = True
-        if sd_hosts:
-            plan.append((systemd.service, dict(base), sd_hosts))
-        if sysv_hosts:
-            plan.append((sysvinit.service, dict(base), sysv_hosts))
+        for name in names:
+            base = {
+                'service': name,
+                'running': params.get('running', True),
+                'enabled': params.get('enabled'),
+            }
+            if params.get('restarted'):
+                base['restarted'] = True
+            if sd_hosts:
+                plan.append((systemd.service, dict(base), sd_hosts))
+            if sysv_hosts:
+                plan.append((sysvinit.service, dict(base), sysv_hosts))
         return plan
 
     if module == 'file':

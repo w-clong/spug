@@ -10,7 +10,6 @@ import Parameter from './Parameter';
 import DataUpload from './DataUpload';
 import DataTransfer from './DataTransfer';
 import PushWebhook from './PushWebhook';
-import PushSpug from './PushSpug';
 import State from './State';
 import Facts from './Facts';
 import Artifact from './Artifact';
@@ -42,8 +41,6 @@ function ModuleConfig(props) {
     case 'push_fs':
     case 'push_wx':
       return <PushWebhook {...props}/>
-    case 'push_spug':
-      return <PushSpug {...props}/>
     case 'state':
       return <State {...props}/>
     case 'facts':

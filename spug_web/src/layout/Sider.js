@@ -58,12 +58,11 @@ export default function Sider(props) {
       <div className={styles.logo}>
         <img src={logo} alt="Logo"/>
       </div>
-      <div className={styles.menus} style={{height: `${document.body.clientHeight - 64}px`}}>
+      <div className={styles.menus}>
         <Menu
           theme="dark"
           mode="inline"
           items={menus}
-          className={styles.menus}
           selectedKeys={[selectedKey]}
           openKeys={openKeys}
           onOpenChange={setOpenKeys}

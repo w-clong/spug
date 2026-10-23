@@ -1,4 +1,4 @@
-from libs.utils import str_decode
+from libs.utils import str_decode, NO_WINDOW
 import subprocess
 import shutil
 import sys
@@ -80,7 +80,7 @@ class Executor:
                     '未找到 bash：Windows 下构建/发布/流水线的本地步骤依赖 bash，'
                     '请安装 Git for Windows 并确保其 bin 目录在 PATH 中'
                 )
-            program, popen_kwargs = f'"{exe}"', {}
+            program, popen_kwargs = f'"{exe}"', dict(NO_WINDOW)
         else:
             program, popen_kwargs = 'bash', {'preexec_fn': os.setsid}
         self.task = subprocess.Popen(

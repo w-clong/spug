@@ -112,13 +112,30 @@ foreach ($pkg in 'PIL', 'pillow') {
 Get-ChildItem $site -Directory -Filter 'pillow-*.dist-info' -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-# 5) Django 只保留 en / zh_Hans 语言包（界面只有中英文），其余翻译文件删掉
-$localeDir = Join-Path $site 'django\conf\locale'
-if (Test-Path $localeDir) {
-    Get-ChildItem $localeDir -Directory -ErrorAction SilentlyContinue |
+# 5) Django 只保留 en / zh_Hans 语言包（界面只有中英文），其余翻译文件删掉。
+#    django/conf/locale 与各 contrib 应用自带的 locale 都要清理，
+#    否则每个 contrib 每个语言都会有 .po/.mo 两个文件（288 个语言包 = 576 个文件）。
+$localeDirs = Get-ChildItem $site 'django' -Directory -Recurse -Filter 'locale' -ErrorAction SilentlyContinue
+foreach ($d in $localeDirs) {
+    Get-ChildItem $d -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notin @('en', 'zh_Hans', '__pycache__') } |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# 6) 源码分发用不到的元数据与编译缓存：
+#    - *.dist-info 保留（pyinfra 靠 entry_points 注册连接器），只删其中的冗余文件
+#    - __pycache__ / *.pyc：首次启动会重新生成，删掉可省上千个小文件
+#    - 类型标注存根 *.pyi 与 tests/ 文档：运行期不需要
+foreach ($f in 'INSTALLER', 'REQUESTED', 'RECORD', 'WHEEL', 'direct_url.json') {
+    Get-ChildItem $site -Directory -Recurse -Filter '*.dist-info' -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName $f } |
+        Where-Object { Test-Path $_ } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+Get-ChildItem $site -Directory -Recurse -Filter '__pycache__' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem $site -Recurse -File -Include '*.pyi', '*.pyc' -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 
 Step '写入 spug.ini'
 @"
@@ -135,7 +152,8 @@ Copy-Item (Join-Path $root 'docs\usage-zh.md') (Join-Path $dist '使用说明.md
 Step '编译 Spug.exe 启动器'
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { throw '未找到 csc.exe（.NET Framework 4.x），无法编译启动器' }
-$icon = Join-Path $root 'spug_web\public\favicon.ico'
+$icon = Join-Path $root 'packaging\spug.ico'
+if (-not (Test-Path $icon)) { $icon = Join-Path $root 'spug_web\public\favicon.ico' }
 $exe = Join-Path $dist 'Spug.exe'
 # 托盘图标改用 Win32 NotifyIcon 实现，需要引用 WinForms / Drawing
 & $csc /nologo /target:winexe /platform:x64 "/win32icon:$icon" "/out:$exe" `
@@ -148,5 +166,42 @@ Copy-Item (Join-Path $root 'packaging\update.ps1') (Join-Path $dist '更新程�
 $size = (Get-ChildItem $dist -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 $count = (Get-ChildItem $dist -Recurse -File | Measure-Object).Count
 Write-Host ('构建完成 -> {0}（{1:N1} MB，{2} 个文件）' -f $dist, $size, $count)
-Write-Host '分发：整个 dist\Spug 目录拷贝到目标机，双击 Spug.exe（首次自动建库 admin/admin）'
-Write-Host '更新：只替换 app/web 时用 更新程序.ps1（保留 data 与 runtime，秒级完成）'
+
+# ------------------------------------------------------------
+# 打分发用的 zip（单包，解压即用）
+# 用 .NET ZipFile 而非 Compress-Archive：后者对 5000+ 小文件非常慢
+# ------------------------------------------------------------
+Step '打包分发 zip'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$fullZip = Join-Path $root 'dist\spug-win-x64.zip'
+if (Test-Path $fullZip) { Remove-Item $fullZip -Force }
+$zip = [System.IO.Compression.ZipFile]::Open($fullZip, 'Create')
+try {
+    # data/ 是运行期生成的数据（数据库/日志/repos），不入包
+    $files = Get-ChildItem $dist -Recurse -File | Where-Object {
+        $rel = $_.FullName.Substring($dist.Length + 1)
+        -not ($rel -match '^data[\\/]')
+    }
+    $total = $files.Count
+    $i = 0
+    foreach ($f in $files) {
+        $i++
+        if ($i % 1000 -eq 0) { Write-Host ("  [{0}/{1}]" -f $i, $total) }
+        $rel = $f.FullName.Substring($dist.Length + 1)
+        $entry = $zip.CreateEntry($rel.Replace('\', '/'), [System.IO.Compression.CompressionLevel]::Optimal)
+        $entry.LastWriteTime = $f.LastWriteTime
+        $in = $f.OpenRead()
+        try {
+            $out = $entry.Open()
+            try { $in.CopyTo($out) } finally { $out.Dispose() }
+        } finally { $in.Dispose() }
+    }
+} finally {
+    $zip.Dispose()
+}
+
+$fz = (Get-Item $fullZip).Length / 1MB
+Write-Host ('分发包 -> {0}（{1:N1} MB，{2:N0} 个文件）' -f $fullZip, $fz, $count)
+Write-Host '分发：把 spug-win-x64.zip 拷到目标机解压，双击 Spug.exe（首次自动建库 admin/admin）'
+Write-Host '升级：解压覆盖安装目录即可（保留 data 与 spug.ini）；也可用 更新程序.ps1 只同步 app/web'

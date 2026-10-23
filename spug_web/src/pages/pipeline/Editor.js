@@ -23,6 +23,9 @@ function Editor(props) {
   const params = useParams()
   const [nodes, setNodes] = useState([])
   const [visible, setVisible] = useState(false)
+  // 画布拖拽：拖动一个节点放到另一个节点上，即把前者调整为后者的下游
+  const [dragNode, setDragNode] = useState(null)
+  const [overId, setOverId] = useState(null)
 
   useEffect(() => {
     if (params.id === 'new') {
@@ -76,9 +79,17 @@ function Editor(props) {
     return [index, upNode, streamIdx]
   }
 
+  // 连续快速添加时 Date.now() 可能重复，碰撞会让 upstream/downstream 指向同一个 id
+  function _newNodeID() {
+    const used = new Set((S.record.nodes || []).map(x => x.id))
+    let id = Date.now()
+    while (used.has(id)) id += 1
+    return id
+  }
+
   function handleAddUpstream() {
     const oldID = S.actionNode.id
-    const newID = new Date().getTime()
+    const newID = _newNodeID()
     const newNode = {id: newID, downstream: [oldID]}
     const [index, upNode, streamIdx] = _findIndexAndUpNode()
     if (upNode) upNode.downstream.splice(streamIdx, 1, newID)
@@ -89,8 +100,8 @@ function Editor(props) {
 
   function handleAddDownstream() {
     const oldID = S.actionNode.id
-    const newID = new Date().getTime()
-    // 必须复用 newID：两次 getTime() 跨毫秒时上游 downstream 会指向不存在的节点
+    const newID = _newNodeID()
+    // 必须复用 newID：两次取时间戳跨毫秒时上游 downstream 会指向不存在的节点
     const newNode = {id: newID}
     if (S.record.nodes.length) {
       const idx = lds.findIndex(S.record.nodes, {id: oldID})
@@ -105,6 +116,113 @@ function Editor(props) {
     }
     S.record = {...S.record}
     S.node = newNode
+  }
+
+  // 同级节点：与当前节点共用同一个上游（XMind 里 Enter 的行为）
+  function handleAddSibling() {
+    const cur = S.node
+    const nodes = S.record.nodes || []
+    const index = nodes.findIndex(x => x.id === cur.id)
+    if (index < 0) return
+    const parent = nodes.find(x => (x.downstream || []).includes(cur.id))
+    if (!parent) {
+      // 起始节点没有上游，没有“同级”可言，退化为添加下游
+      return handleAddDownstream()
+    }
+    const newID = _newNodeID()
+    const newNode = {id: newID}
+    parent.downstream = [...(parent.downstream || []), newID]
+    nodes.splice(index + 1, 0, newNode)
+    S.record = {...S.record}
+    S.node = newNode
+  }
+
+  // ---- 键盘快捷键：先点选节点，再 Tab/Enter/Delete 操作 ----
+  useEffect(() => {
+    function isEditing(el) {
+      if (!el) return false
+      const tag = (el.tagName || '').toLowerCase()
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable
+    }
+
+    function onKeyDown(e) {
+      if (isEditing(e.target) || e.ctrlKey || e.metaKey || e.altKey) return
+      // 弹窗/抽屉/下拉里的按键交给控件自己处理，避免误删节点
+      if (e.target.closest && e.target.closest('.ant-modal-root, .ant-drawer, .ant-dropdown, .ant-select-dropdown')) return
+      const node = S.node || {}
+      if (node.id === undefined || node.id === null) return
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        S.actionNode = node
+        if (e.shiftKey) {
+          handleAddUpstream()
+        } else {
+          handleAddDownstream()
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        S.actionNode = node
+        handleAddSibling()
+      } else if (e.key === 'Delete') {
+        e.preventDefault()
+        S.actionNode = node
+        handleDelNode()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function handleDragStart(node) {
+    setDragNode(node)
+  }
+
+  function handleDragEnd() {
+    setDragNode(null)
+    setOverId(null)
+  }
+
+  // 收集某个节点能到达的所有下游节点 id（用于环检测）
+  function _collectDescendants(id, acc = new Set()) {
+    const node = (S.record.nodes || []).find(x => x.id === id)
+    if (!node) return acc
+    for (const key of node.downstream || []) {
+      if (!acc.has(key)) {
+        acc.add(key)
+        _collectDescendants(key, acc)
+      }
+    }
+    return acc
+  }
+
+  function handleDrop(targetNode) {
+    const source = dragNode
+    setDragNode(null)
+    setOverId(null)
+    if (!source || !targetNode || source.id === targetNode.id) return
+    const allNodes = S.record.nodes || []
+    const sourceNode = allNodes.find(x => x.id === source.id)
+    const target = allNodes.find(x => x.id === targetNode.id)
+    if (!sourceNode || !target) return
+    // 起始节点（数组第一项）是流程入口，必须没有上游
+    if (allNodes[0] && allNodes[0].id === sourceNode.id) {
+      return message.error(t('起始节点不能调整为其他节点的下游'))
+    }
+    if (_collectDescendants(sourceNode.id).has(target.id)) {
+      return message.error(t('不能形成循环依赖'))
+    }
+    // 每个节点只保留一个上游：先从所有上游中摘除 source，再挂到 target 下
+    for (const item of allNodes) {
+      if (item.downstream) {
+        item.downstream = item.downstream.filter(x => x !== sourceNode.id)
+      }
+    }
+    target.downstream = [...(target.downstream || []).filter(x => x !== sourceNode.id), sourceNode.id]
+    S.record = {...S.record}
+    // 新建但尚未保存的流水线没有 id，先只更新本地画布，保存时一并提交
+    if (S.record.id) S.updateRecord()
   }
 
   function handleDelNode() {
@@ -158,6 +276,9 @@ function Editor(props) {
       <div className={css.header}>
         <div className={css.title}>{S.record.name}</div>
         <EditOutlined className={css.edit} onClick={() => setVisible(true)}/>
+        <span className={css.tip}>
+          {t('拖拽节点可调整上下游；选中节点后：Tab 加下游 / Enter 加同级 / Shift+Tab 加上游 / Delete 删除')}
+        </span>
         <div style={{flex: 1}}/>
         <Button className={css.back} type="link" icon={<SaveOutlined/>}
                 onClick={handleSaveBaseline}>{t('存为基线')}</Button>
@@ -172,7 +293,17 @@ function Editor(props) {
           {nodes.map((row, idx) => (
             <div key={idx} className={css.row}>
               {row.map((item, idx) => (
-                <Node key={idx} node={item} onAction={handleAction}/>
+                <Node
+                  key={typeof item === 'string' ? `p-${idx}` : item.id}
+                  node={item}
+                  onAction={handleAction}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onDragEnter={node => setOverId(node.id)}
+                  onDragLeave={() => setOverId(null)}
+                  onDrop={handleDrop}
+                  canDrop={!!dragNode && dragNode.id !== item.id}
+                  isOver={typeof item !== 'string' && overId === item.id}/>
               ))}
             </div>
           ))}

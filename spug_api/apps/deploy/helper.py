@@ -4,7 +4,7 @@
 from django.conf import settings
 from django.template.defaultfilters import filesizeformat
 from libs.memredis import get_redis_connection
-from libs.utils import SpugError, human_datetime, render_str, str_decode
+from libs.utils import SpugError, human_datetime, render_str, str_decode, NO_WINDOW
 from libs.spug import Notification
 from libs.locale import translate_console, translate_choice
 from apps.host.models import Host
@@ -484,7 +484,8 @@ class Helper(NotifyMixin, KitMixin):
             env=env,
             shell=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT)
+            stderr=subprocess.STDOUT,
+            **NO_WINDOW)
         message = b''
         while True:
             output = task.stdout.read(1)

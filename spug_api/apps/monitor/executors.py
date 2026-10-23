@@ -2,6 +2,7 @@
 # Copyright: (c) <spug.dev@gmail.com>
 # Released under the AGPL-3.0 License.
 from libs.memredis import get_redis_connection
+from libs.utils import NO_WINDOW
 from apps.host.models import Host
 from apps.monitor.utils import handle_notify, handle_trigger_event
 from socket import socket
@@ -72,7 +73,8 @@ def ping_check(addr):
             command = ['ping', '-n', '1', '-w', '3000', addr]
         else:
             command = ['ping', '-c', '1', '-W', '3', addr]
-        task = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
+        task = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              timeout=15, **NO_WINDOW)
         if task.returncode == 0:
             return True, 'Ping检测正常'
         else:
@@ -132,15 +134,22 @@ def monitor_worker_handler(job):
             rds.hdel(key, f_count, f_time)
         if v_time:
             logging.warning('send recovery notification')
-            handle_notify(task_id, target, is_ok, message, int(v_count) + 1)
+            try:
+                handle_notify(task_id, target, is_ok, message, int(v_count) + 1)
+            except Exception:
+                # 通知渠道异常不能吞掉：这里没有捕获的话异常会进入线程池被静默丢弃
+                logging.exception('send recovery notification failed')
         return
     v_count = rds.hincrby(key, f_count)
     if v_count >= threshold:
         if not v_time or int(time.time()) - int(v_time) >= quiet * 60:
             rds.hset(key, f_time, int(time.time()))
             logging.warning('send fault alarm notification')
-            handle_trigger_event(task_id, addr if tp in ('3', '4') else None)
-            handle_notify(task_id, target, is_ok, message, v_count)
+            try:
+                handle_trigger_event(task_id, addr if tp in ('3', '4') else None)
+                handle_notify(task_id, target, is_ok, message, v_count)
+            except Exception:
+                logging.exception('send fault alarm notification failed')
 
 
 def dispatch(tp, addr, extra):

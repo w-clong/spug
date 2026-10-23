@@ -24,7 +24,20 @@ class Host(models.Model, ModelMixin):
 
     @property
     def private_key(self):
-        return self.pkey or AppSetting.get('private_key')
+        if self.pkey:
+            return self.pkey
+        # 密码认证的主机不需要密钥，避免无谓地触发全局密钥生成
+        if self.password:
+            return None
+        # 全局密钥在首次密钥认证时自动生成；不能直接用 AppSetting.get，
+        # 从未配置过全局密钥时会抛 KeyError，导致批量执行直接失败。
+        return AppSetting.get_ssh_key()[0]
+
+    def ssh_credentials(self):
+        """返回 SSH 连接凭证，供需要经队列传递参数的执行器使用。"""
+        if self.password:
+            return {'password': self.password}
+        return {'pkey': self.private_key}
 
     def get_ssh(self, pkey=None, default_env=None):
         if self.password:

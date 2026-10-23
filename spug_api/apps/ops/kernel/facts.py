@@ -88,13 +88,18 @@ def collect(host):
             version = release.get('version_id') or release.get('version')
             if version:
                 result['os_version'] = version
-    if result.get('memory') and isinstance(result['memory'], dict):
-        total = result['memory'].get('MemTotal') or result['memory'].get('total')
+    # pyinfra 3 的 hardware.Memory 直接返回总内存 MB（旧版本返回带 MemTotal 的字典），
+    # 两种形态都要补出 memory_total_mb，页面/模板才有统一字段可用。
+    memory = result.get('memory')
+    if isinstance(memory, dict):
+        total = memory.get('MemTotal') or memory.get('total')
         if total:
             try:
                 result['memory_total_mb'] = int(total) // 1024
             except (TypeError, ValueError):
                 pass
+    elif isinstance(memory, (int, float)) and not isinstance(memory, bool) and memory > 0:
+        result['memory_total_mb'] = int(memory)
     return result
 
 

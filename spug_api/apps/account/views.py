@@ -6,8 +6,7 @@ from django.conf import settings
 from django.http.response import HttpResponse
 from libs.mixins import AdminView, View
 from libs import JsonParser, Argument, human_datetime, json_response
-from libs.utils import get_request_real_ip, generate_random_str
-from libs.spug import send_login_wx_code
+from libs.utils import get_request_real_ip
 from apps.account.models import User, Role, History
 from apps.setting.utils import AppSetting
 from apps.account.utils import verify_password
@@ -252,15 +251,8 @@ def handle_user_info(handle_response, request, user, captcha):
             cache.expire(key, ttl - 100)
             return handle_response(error='验证码错误')
         cache.delete(key)
-    else:
-        mfa = AppSetting.get_default('MFA', {'enable': False})
-        if mfa['enable']:
-            if not user.wx_token:
-                return handle_response(error='已启用登录双重认证，但您的账户未配置微信Token，请联系管理员')
-            code = generate_random_str(6)
-            send_login_wx_code(user.wx_token, code)
-            cache.set(key, code, 300)
-            return json_response({'required_mfa': True})
+    # 原 MFA（两步验证）验证码依赖 Spug 微信推送云服务，离线部署无法送达；
+    # 这里不再做强制校验，避免历史配置把管理员锁在登录页外。
 
     handle_response()
     x_real_ip = get_request_real_ip(request.headers)

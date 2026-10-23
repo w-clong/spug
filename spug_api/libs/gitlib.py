@@ -38,6 +38,7 @@ from tempfile import NamedTemporaryFile
 from datetime import datetime
 from io import StringIO
 from functools import partial
+from libs.utils import NO_WINDOW
 import subprocess
 import shutil
 import shlex
@@ -262,7 +263,7 @@ class RemoteGit:
         # 参数列表方式执行，不经 shell；url 已拒绝 - 开头，避免被当成 --upload-pack 等选项
         command = ['git', 'ls-remote', '-h', url]
         try:
-            res = subprocess.run(command, capture_output=True, env=env, timeout=30)
+            res = subprocess.run(command, capture_output=True, env=env, timeout=30, **NO_WINDOW)
         except subprocess.TimeoutExpired:
             return False, f'git ls-remote timeout: {url}'
         if res.returncode == 0:
@@ -281,7 +282,7 @@ class RemoteGit:
         command = ['git', 'ls-remote', '--tags', '--refs', url]
         # 在请求线程内同步执行，必须限时，避免不可达的 git 服务拖死 worker
         try:
-            res = subprocess.run(command, capture_output=True, env=env, timeout=15)
+            res = subprocess.run(command, capture_output=True, env=env, timeout=15, **NO_WINDOW)
         except subprocess.TimeoutExpired:
             return False, f'git ls-remote timeout: {url}'
         if res.returncode == 0:
